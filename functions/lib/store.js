@@ -1,0 +1,145 @@
+'use strict';
+
+const admin = require('firebase-admin');
+
+const { PENDING_COLLECTION, REGISTRATIONS_COLLECTION, SERIALS_COLLECTION } = require('./config');
+const { isExpired } = require('./expiry');
+const { payloadFields } = require('./payload');
+
+/**
+ * Firestore access for the confirmation flow.
+ *
+ * Everything here runs under the Admin SDK, which bypasses security rules —
+ * which is exactly why `pending_registrations` must be closed to clients for
+ * reads (rules snippet in the README). Under the magic-link shape the document
+ * id is the token, so a client able to read the collection could enumerate live
+ * links; no browser ever touches it, because the page is server-rendered.
+ */
+
+function db() {
+    return admin.firestore();
+}
+
+function pendingRef(token) {
+    return db().collection(PENDING_COLLECTION).doc(token);
+}
+
+/** Reads a pending registration, or null when the token is unknown. */
+async function loadPending(token) {
+    const doc = await pendingRef(token).get();
+    if (!doc.exists) return null;
+    return doc.data();
+}
+
+/**
+ * Fields stamped onto the registration in addition to the copied payload.
+ *
+ * These are not in the app→web handoff spec, which asks only for the payload
+ * plus `userId` and `createdAt`. They are here so a row created by this route
+ * is indistinguishable in the portal from one created by the registration
+ * wizard, which reads `timestamp`, `isDetailsCorrect` and `unregistered`.
+ * Anything the portal does not want can be deleted from this one function.
+ */
+function confirmationMarkers(confirmedAt) {
+    return {
+        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+        registrationSource: 'mobile-app-confirm-link',
+        unregistered: false,
+        isDetailsCorrect: true,
+        customerConfirmed: true,
+        customerConfirmedAt: confirmedAt,
+    };
+}
+
+/**
+ * Turns a pending record into a registration.
+ *
+ * Runs in a transaction because three documents move together and a half-done
+ * confirmation is the worst outcome available: a registration with no serial
+ * flipped can be registered twice, and a serial flipped with no registration
+ * locks the customer out of ever registering it.
+ *
+ * Idempotent by design. A double-tap, a retried request, or the customer
+ * reopening the link all land on the already-`completed` branch and return the
+ * id written the first time rather than creating a second registration.
+ *
+ * Returns one of:
+ *   { status: 'completed', registeredProductId, alreadyCompleted, serialFlipped }
+ *   { status: 'not-found' | 'expired' | 'cancelled' | 'invalid' }
+ */
+async function completeRegistration(token, { userAgent } = {}) {
+    const firestore = db();
+    const ref = pendingRef(token);
+
+    return firestore.runTransaction(async (tx) => {
+        const doc = await tx.get(ref);
+        if (!doc.exists) return { status: 'not-found' };
+
+        const pending = doc.data();
+
+        // Already done — return the original id rather than registering twice.
+        if (pending.status === 'completed') {
+            return {
+                status: 'completed',
+                alreadyCompleted: true,
+                registeredProductId: pending.registeredProductId || '',
+            };
+        }
+
+        // 'cancelled', or anything the app invents later. Only 'pending' proceeds.
+        if (pending.status && pending.status !== 'pending') {
+            return { status: pending.status === 'expired' ? 'expired' : 'cancelled' };
+        }
+
+        if (isExpired(pending.expiresAt)) return { status: 'expired' };
+
+        // Without an owner the registration would not appear in anyone's "My
+        // Products", and the serial would still be flipped — leaving a product
+        // that cannot be registered again and belongs to no one. Refusing is
+        // recoverable; writing it is not.
+        const userId = typeof pending.userId === 'string' ? pending.userId.trim() : '';
+        if (!userId) return { status: 'invalid', reason: 'missing-userId' };
+
+        // Every read must precede every write in a transaction, so the serial
+        // document is fetched before anything is set.
+        const serialDocId = typeof pending.serialDocId === 'string' ? pending.serialDocId.trim() : '';
+        let serialRef = null;
+        if (serialDocId) {
+            serialRef = firestore.collection(SERIALS_COLLECTION).doc(serialDocId);
+            const serialDoc = await tx.get(serialRef);
+            // A serial that is not in inventory is not worth failing the
+            // customer's registration over — record that it was not flipped and
+            // let the row be created.
+            if (!serialDoc.exists) serialRef = null;
+        }
+
+        const confirmedAt = admin.firestore.Timestamp.now();
+        const registrationRef = firestore.collection(REGISTRATIONS_COLLECTION).doc();
+
+        tx.set(registrationRef, {
+            ...payloadFields(pending),
+            userId,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            ...confirmationMarkers(confirmedAt),
+        });
+
+        if (serialRef) tx.update(serialRef, { registered: true });
+
+        tx.update(ref, {
+            status: 'completed',
+            registeredProductId: registrationRef.id,
+            completedAt: confirmedAt,
+            completedUserAgent: (userAgent || '').slice(0, 300),
+        });
+
+        return {
+            status: 'completed',
+            alreadyCompleted: false,
+            registeredProductId: registrationRef.id,
+            serialFlipped: Boolean(serialRef),
+            serialDocId,
+        };
+    });
+}
+
+module.exports = { loadPending, completeRegistration };

@@ -1,0 +1,15 @@
+{
+  "name": "feston-confirm",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Feston — customer registration confirmation links. The customer confirms and this service creates the registration. The code lives in functions/; these scripts just forward to it so commands work from either folder.",
+  "scripts": {
+    "start": "npm --prefix functions run dev",
+    "dev": "npm --prefix functions run dev",
+    "test": "npm --prefix functions test",
+    "preview": "npm --prefix functions run preview",
+    "emulate": "firebase emulators:start --only functions",
+    "deploy": "firebase deploy --only functions:confirm",
+    "postinstall": "npm --prefix functions install"
+  }
+}

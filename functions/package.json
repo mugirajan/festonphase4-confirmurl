@@ -1,0 +1,21 @@
+{
+  "name": "feston-confirm-functions",
+  "description": "Registration confirmation links for Feston — the customer-facing review page that creates the registration",
+  "private": true,
+  "main": "index.js",
+  "engines": {
+    "node": "22"
+  },
+  "scripts": {
+    "test": "node --test \"test/*.test.js\"",
+    "dev": "node scripts/dev-server.js",
+    "preview": "node scripts/preview.js",
+    "serve": "firebase emulators:start --only functions",
+    "logs": "firebase functions:log"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "firebase-admin": "^12.6.0",
+    "firebase-functions": "^6.0.1"
+  }
+}
