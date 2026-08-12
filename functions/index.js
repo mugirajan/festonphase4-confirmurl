@@ -31,7 +31,7 @@ const cors = require('cors')({ origin: true });
 
 admin.initializeApp();
 
-const { LOGO_URL, linkFor } = require('./lib/config');
+const { LOGO_URL, linkFor, FIREBASE_WEB_CONFIG, OTP_ENABLED } = require('./lib/config');
 const { isValidToken } = require('./lib/tokens');
 const { isExpired } = require('./lib/expiry');
 const { buildDetailsFromRegistration, hasAnyDetail } = require('./lib/snapshot');
@@ -123,6 +123,12 @@ async function handlePage(res, token) {
         return sendHtml(res, 500, renderUnavailablePage({ reason: 'error', logoUrl: LOGO_URL }));
     }
 
+    // Phone for OTP: prefer the E.164 the app stored; fall back to the bare
+    // 10-digit with a +91 default. The page sends the OTP to this number.
+    const rawContact = asString(pending.customerContact);
+    const digits = asString(pending.customerPhone).replace(/\D/g, '');
+    const phoneE164 = rawContact || (digits ? '+91' + digits.slice(-10) : '');
+
     return sendHtml(
         res,
         200,
@@ -132,6 +138,9 @@ async function handlePage(res, token) {
             actionUrl: linkFor(token),
             token,
             logoUrl: LOGO_URL,
+            otpEnabled: OTP_ENABLED,
+            phoneE164,
+            firebaseConfig: FIREBASE_WEB_CONFIG,
         }),
     );
 }
@@ -145,14 +154,59 @@ async function handlePage(res, token) {
  * this point already assumes it may be called more than once.
  */
 async function handleConfirm(req, res, token) {
+    const body = (req.body && typeof req.body === 'object') ? req.body : {};
+
+    // Both acknowledgements are required — the page enforces it too, but never
+    // trust the page: a registration is a record of consent that was actually given.
+    const acknowledgements = {
+        acceptedTerms: body.acceptedTerms === true,
+        acceptedDataForTraining: body.acceptedDataForTraining === true,
+    };
+    if (!acknowledgements.acceptedTerms || !acknowledgements.acceptedDataForTraining) {
+        return sendJson(res, 400, {
+            status: 'acknowledgements-required',
+            message: 'Please accept both acknowledgements to continue.',
+        });
+    }
+
+    // OTP: verify the Firebase phone-auth ID token and take the verified phone
+    // FROM the token (never from the client body). store re-checks it against
+    // the pending record's customer.
+    let verifiedPhone;
+    if (OTP_ENABLED) {
+        const idToken = asString(body.idToken);
+        if (!idToken) {
+            return sendJson(res, 401, { status: 'otp-required', message: 'Phone verification is required.' });
+        }
+        try {
+            const decoded = await admin.auth().verifyIdToken(idToken);
+            verifiedPhone = asString(decoded && decoded.phone_number);
+        } catch (error) {
+            functions.logger.warn('confirm: ID token verification failed', error);
+            return sendJson(res, 401, { status: 'otp-invalid', message: 'Phone verification failed. Please try again.' });
+        }
+        if (!verifiedPhone) {
+            return sendJson(res, 401, { status: 'otp-invalid', message: 'Phone verification failed. Please try again.' });
+        }
+    }
+
     const result = await store.completeRegistration(token, {
         userAgent: asString(req.get('user-agent')),
+        verifiedPhone,
+        requirePhoneMatch: OTP_ENABLED,
+        acknowledgements,
     });
 
     if (result.status === 'not-found') return sendJson(res, 404, { status: 'not-found' });
     if (result.status === 'expired') return sendJson(res, 410, { status: 'expired' });
     if (result.status === 'cancelled') {
         return sendJson(res, 409, { status: 'cancelled', message: 'This link is no longer active.' });
+    }
+    if (result.status === 'phone-mismatch') {
+        return sendJson(res, 401, {
+            status: 'otp-invalid',
+            message: 'That code was verified for a different number than the one on this registration.',
+        });
     }
 
     if (result.status === 'invalid') {

@@ -1,5 +1,10 @@
 'use strict';
 
+// OTP is Firebase Phone Auth, driven in a real browser — this in-process test
+// can't run it, so these tests cover the core token->registration flow with OTP
+// disabled. The two acknowledgements ARE sent below (required either way).
+process.env.CONFIRM_OTP_ENABLED = 'false';
+
 /**
  * End-to-end flow test for the `confirm` function.
  *
@@ -159,7 +164,8 @@ async function call(reqInit) {
 }
 
 const openPage = (token) => call({ method: 'GET', query: { t: token } });
-const pressConfirm = (token) => call({ method: 'POST', query: { t: token } });
+const pressConfirm = (token) =>
+    call({ method: 'POST', query: { t: token }, body: { acceptedTerms: true, acceptedDataForTraining: true } });
 
 // --- fixtures ----------------------------------------------------------------
 

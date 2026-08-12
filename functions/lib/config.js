@@ -55,6 +55,29 @@ const PUBLIC_BASE_URL = (
  */
 const LOGO_URL = process.env.CONFIRM_LOGO_URL || '';
 
+/**
+ * Firebase web config for the feston-prod project, embedded in the confirm page
+ * so it can run Phone Authentication (OTP) client-side. These are public
+ * identifiers (the same ones ship in the mobile app), not secrets.
+ */
+const FIREBASE_WEB_CONFIG = {
+    apiKey: process.env.CONFIRM_FIREBASE_API_KEY || 'AIzaSyAqCKAYTJFw8pm0hhuGg8u0bodOziIixeo',
+    authDomain: process.env.CONFIRM_FIREBASE_AUTH_DOMAIN || 'feston-prod.firebaseapp.com',
+    projectId: process.env.CONFIRM_FIREBASE_PROJECT_ID || 'feston-prod',
+    appId:
+        process.env.CONFIRM_FIREBASE_APP_ID ||
+        '1:754815765289:web:ace860ec7f9601bcd7c538',
+};
+
+/**
+ * When true, the customer must pass a phone OTP (Firebase Phone Auth) before the
+ * registration is written; the server verifies the resulting ID token and that
+ * its phone number matches the pending record. Defaults ON. Set
+ * CONFIRM_OTP_ENABLED=false to fall back to token-only confirmation (e.g. before
+ * Phone Auth is enabled / billed on the project).
+ */
+const OTP_ENABLED = String(process.env.CONFIRM_OTP_ENABLED || 'true').toLowerCase() !== 'false';
+
 function linkFor(token) {
     return `${PUBLIC_BASE_URL}?t=${encodeURIComponent(token)}`;
 }
@@ -65,6 +88,8 @@ module.exports = {
     SERIALS_COLLECTION,
     PUBLIC_BASE_URL,
     LOGO_URL,
+    FIREBASE_WEB_CONFIG,
+    OTP_ENABLED,
     TTL_MINUTES,
     TTL_HOURS,
     linkFor,

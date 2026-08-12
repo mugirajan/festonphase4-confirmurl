@@ -51,6 +51,30 @@ function confirmationMarkers(confirmedAt) {
     };
 }
 
+/** Last 10 digits of a phone, for a format-agnostic comparison. */
+function last10(value) {
+    return typeof value === 'string' ? value.replace(/\D/g, '').slice(-10) : '';
+}
+
+/**
+ * The consent + verification the customer gave on the confirm page: the two
+ * acknowledgements (terms, data-for-training) and, when OTP is on, the phone
+ * that was verified. Stored on the registration as a record of what was agreed.
+ */
+function consentFields(acknowledgements = {}, verifiedPhone) {
+    const out = {};
+    if (acknowledgements.acceptedTerms) out.acceptedTerms = true;
+    if (acknowledgements.acceptedDataForTraining) {
+        out.acceptedDataForTraining = true;
+        out.dataUsageConsent = true;
+    }
+    if (verifiedPhone) {
+        out.phoneVerified = true;
+        out.phoneVerifiedNumber = verifiedPhone;
+    }
+    return out;
+}
+
 /**
  * Turns a pending record into a registration.
  *
@@ -67,7 +91,7 @@ function confirmationMarkers(confirmedAt) {
  *   { status: 'completed', registeredProductId, alreadyCompleted, serialFlipped }
  *   { status: 'not-found' | 'expired' | 'cancelled' | 'invalid' }
  */
-async function completeRegistration(token, { userAgent } = {}) {
+async function completeRegistration(token, { userAgent, verifiedPhone, requirePhoneMatch, acknowledgements } = {}) {
     const firestore = db();
     const ref = pendingRef(token);
 
@@ -100,6 +124,17 @@ async function completeRegistration(token, { userAgent } = {}) {
         const userId = typeof pending.userId === 'string' ? pending.userId.trim() : '';
         if (!userId) return { status: 'invalid', reason: 'missing-userId' };
 
+        // OTP: the phone verified by Firebase (from the ID token) must be the
+        // customer on the pending record. Compared on the last 10 digits so a
+        // +91 / spacing difference never blocks a legitimate confirm.
+        if (requirePhoneMatch) {
+            const want = last10(pending.customerContact) || last10(pending.customerPhone);
+            const got = last10(verifiedPhone);
+            if (!got || !want || got !== want) {
+                return { status: 'phone-mismatch', reason: 'otp-phone-mismatch' };
+            }
+        }
+
         // Every read must precede every write in a transaction, so the serial
         // document is fetched before anything is set.
         const serialDocId = typeof pending.serialDocId === 'string' ? pending.serialDocId.trim() : '';
@@ -121,6 +156,7 @@ async function completeRegistration(token, { userAgent } = {}) {
             userId,
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
             ...confirmationMarkers(confirmedAt),
+            ...consentFields(acknowledgements, verifiedPhone),
         });
 
         if (serialRef) tx.update(serialRef, { registered: true });

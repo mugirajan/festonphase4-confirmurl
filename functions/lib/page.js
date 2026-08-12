@@ -3,10 +3,11 @@
 /**
  * The confirmation page.
  *
- * Rendered server-side as a single self-contained document — no build step, no
- * framework, no external CSS or fonts. The customer opening this link is on a
- * phone, often on mobile data, straight after an installer handed them the
- * screen; the page has to paint immediately and work with nothing cached.
+ * Rendered server-side as a single self-contained document. When OTP is on it
+ * additionally loads the Firebase Auth SDK (from gstatic) to run Phone
+ * Authentication client-side; that is the one external dependency, and only on
+ * the OTP path. The customer opening this link is on a phone, often on mobile
+ * data, straight after an installer handed them the screen.
  *
  * Styling follows the Feston public register page: gold hairline, Feston blue
  * for actions, everything else quiet.
@@ -24,6 +25,9 @@ const COMPANY_NAME = 'Feston S.E.V. Pvt. Ltd.';
 const COMPANY_ADDRESS =
     'Survey No. 308/1A/5, Chettipedu Village Thandalam Post, Sriperumpudur Taluk,<br />Thandalam, Kancheepuram, Tamil Nadu, 602105';
 const COMPANY_SITE = 'https://www.festonsev.com';
+
+/** Firebase JS SDK version loaded from gstatic on the OTP path. */
+const FIREBASE_SDK_VERSION = '10.13.2';
 
 function styles() {
     return `
@@ -97,6 +101,18 @@ function styles() {
     footer .co { font-size: 13.5px; font-weight: 600; color: ${BRAND_BLUE}; margin: 0; }
     footer .addr, footer .terms { font-size: 11.5px; color: #6b7280; line-height: 1.6; margin: 6px 0 0; }
     footer a { color: ${BRAND_BLUE}; font-weight: 500; }
+
+    .acks { display: grid; gap: 12px; margin: 4px 0 18px; }
+    .ack { display: flex; gap: 10px; align-items: flex-start; font-size: 13px; line-height: 1.5; color: #374151; cursor: pointer; }
+    .ack input { margin: 2px 0 0; width: 18px; height: 18px; flex: 0 0 auto; accent-color: ${BRAND_BLUE}; }
+    .ack a { color: ${BRAND_BLUE}; font-weight: 500; }
+    .otp-input {
+      width: 100%; text-align: center; letter-spacing: 8px; font-size: 22px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      padding: 12px; border: 1px solid #cbd5e1; border-radius: 10px; margin-bottom: 12px;
+    }
+    .otp-links { display: flex; justify-content: space-between; margin-top: 12px; }
+    button.linkbtn { background: none; border: 0; color: ${BRAND_BLUE}; font-size: 13px; font-weight: 500; cursor: pointer; padding: 6px; font-family: inherit; }
     [hidden] { display: none !important; }
   `;
 }
@@ -162,21 +178,37 @@ ${script}
 </html>`;
 }
 
+/** Masks a phone for display: keeps the last 4 digits, dots the rest. */
+function maskPhone(e164) {
+    const s = String(e164 || '').replace(/[^\d+]/g, '');
+    if (s.replace(/\D/g, '').length < 4) return s || 'your phone';
+    return s.slice(0, s.length - 4).replace(/\d/g, '•') + s.slice(-4);
+}
+
 /**
- * The live page: details plus the acknowledgement button.
+ * The live page: details, the two acknowledgements, and confirmation.
  *
- * The countdown is a courtesy, not a control — the expiry that actually decides
- * anything is re-checked on the server when the button is pressed. If the clock
- * runs out with the page open, the button disables itself, but a customer whose
- * device clock is wrong is still stopped by the server, not by this script.
+ * Both acknowledgements (terms, data-for-training) must be ticked before the
+ * primary button enables. With OTP on, the button sends a one-time code via
+ * Firebase Phone Auth to the customer's number and the registration is POSTed
+ * only after the code is verified (the server re-verifies the ID token). With
+ * OTP off it posts straight away. The countdown is a courtesy — the real expiry
+ * is re-checked on the server when the request lands.
  */
-function renderPendingPage({ details, expiresAt, actionUrl, token, logoUrl }) {
+function renderPendingPage({ details, expiresAt, actionUrl, token, logoUrl, otpEnabled, phoneE164, firebaseConfig }) {
     const remaining = secondsRemaining(expiresAt);
+    const otp = !!otpEnabled && !!phoneE164;
+    const masked = maskPhone(phoneE164);
+    const primaryLabel = otp ? 'Verify phone &amp; register' : 'Confirm and complete registration';
+    const disclaimer = otp
+        ? 'We will send a one-time code to <strong>' + escapeHtml(masked) + '</strong> to confirm it is you.'
+        : 'By confirming, you acknowledge that the details above are correct and belong to you. Your product will be registered to your Feston account.';
+
     const body = `
 <h1>Confirm your registration</h1>
 <div class="rule"></div>
-<p class="lede">Please check the details below. If everything is correct, tap the button
-to complete your registration — your product is registered only after you confirm.</p>
+<p class="lede">Please check the details below. If everything is correct, accept the two
+acknowledgements and continue — your product is registered only after you confirm.</p>
 
 <div class="notice notice-amber" id="expiry-notice">
   This link expires in <strong id="countdown">${escapeHtml(humaniseSeconds(remaining))}</strong>.
@@ -187,10 +219,30 @@ ${renderSections(details)}
 </div>
 
 <div class="actions" id="action-area">
-  <button class="primary" id="confirm-btn" type="button">Confirm and complete registration</button>
-  <p class="disclaimer">By confirming, you acknowledge that the details above are correct
-  and belong to you. Your product will be registered to your Feston account.</p>
+  <div class="acks">
+    <label class="ack">
+      <input type="checkbox" id="ack-terms" />
+      <span>I have read and agree to the <a href="${COMPANY_SITE}" target="_blank" rel="noopener">Terms &amp; Conditions</a> and warranty terms.</span>
+    </label>
+    <label class="ack">
+      <input type="checkbox" id="ack-data" />
+      <span>I agree that Feston may use my registration and product data to improve and train its products and services.</span>
+    </label>
+  </div>
+  <button class="primary" id="confirm-btn" type="button" disabled>${primaryLabel}</button>
+  <p class="disclaimer">${disclaimer}</p>
   <p class="error" id="error-text" hidden></p>
+</div>
+
+<div class="actions" id="otp-area" hidden>
+  <p class="lede">Enter the 6-digit code sent to <strong>${escapeHtml(masked)}</strong>.</p>
+  <input class="otp-input" id="otp-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="------" />
+  <button class="primary" id="otp-verify-btn" type="button">Verify &amp; register</button>
+  <div class="otp-links">
+    <button class="linkbtn" id="otp-resend-btn" type="button">Resend code</button>
+    <button class="linkbtn" id="otp-back-btn" type="button">Back</button>
+  </div>
+  <p class="error" id="otp-error" hidden></p>
 </div>
 
 <div id="done-area" hidden>
@@ -209,52 +261,62 @@ ${renderSections(details)}
     <p>For your security, confirmation links stay active for a limited time.
     Please ask for a new link from the Feston app.</p>
   </div>
-</div>`;
+</div>
 
-    const script = `<script>
+<div id="recaptcha-container"></div>`;
+
+    const injected =
+        `var expiresAtMs = ${Number(toMillis(expiresAt)) || 0};` +
+        `var actionUrl = ${JSON.stringify(actionUrl)};` +
+        `var token = ${JSON.stringify(token)};` +
+        `var OTP_ON = ${otp ? 'true' : 'false'};` +
+        `var PHONE = ${JSON.stringify(phoneE164 || '')};` +
+        `var FB = ${JSON.stringify(otp ? firebaseConfig : null)};` +
+        `var PRIMARY = ${JSON.stringify(otp ? 'Verify phone & register' : 'Confirm and complete registration')};`;
+
+    const imports = otp
+        ? `import { initializeApp } from 'https://www.gstatic.com/firebasejs/${FIREBASE_SDK_VERSION}/firebase-app.js';\n` +
+          `import { getAuth, RecaptchaVerifier, signInWithPhoneNumber } from 'https://www.gstatic.com/firebasejs/${FIREBASE_SDK_VERSION}/firebase-auth.js';\n`
+        : '';
+
+    const script =
+        `<script type="module">\n` +
+        imports +
+        injected +
+        PAGE_RUNTIME +
+        `\n</script>`;
+
+    return shell({ title: 'Confirm your registration — Feston', logoUrl, body, script });
+}
+
+/**
+ * Client runtime for the pending page. Plain concatenated JS (no template
+ * literals) so it can be embedded without escaping. Reads the `var`s injected
+ * above it. The Firebase symbols (initializeApp / getAuth / RecaptchaVerifier /
+ * signInWithPhoneNumber) are imported only when OTP_ON, and only referenced then.
+ */
+const PAGE_RUNTIME = `
 (function () {
-  var expiresAtMs = ${Number(toMillis(expiresAt)) || 0};
-  var actionUrl = ${JSON.stringify(actionUrl)};
-  var token = ${JSON.stringify(token)};
+  var $ = function (id) { return document.getElementById(id); };
+  var ackTerms = $('ack-terms'), ackData = $('ack-data');
+  var btn = $('confirm-btn'), errorText = $('error-text'), countdown = $('countdown');
+  var actionArea = $('action-area'), detailsCard = $('details-card'), expiryNotice = $('expiry-notice');
+  var doneArea = $('done-area'), lapsedArea = $('lapsed-area');
+  var otpArea = $('otp-area'), otpError = $('otp-error'), otpVerifyBtn = $('otp-verify-btn');
+  var otpResendBtn = $('otp-resend-btn'), otpBackBtn = $('otp-back-btn'), otpCode = $('otp-code');
 
-  var btn = document.getElementById('confirm-btn');
-  var errorText = document.getElementById('error-text');
-  var countdown = document.getElementById('countdown');
-  var actionArea = document.getElementById('action-area');
-  var detailsCard = document.getElementById('details-card');
-  var expiryNotice = document.getElementById('expiry-notice');
-  var doneArea = document.getElementById('done-area');
-  var lapsedArea = document.getElementById('lapsed-area');
-
-  // Mirrors humaniseSeconds in lib/format.js — the server renders the first
-  // value and this takes over from it, so the two must not disagree on how a
-  // 48-hour link reads.
-  function human(totalSeconds) {
-    var s = Math.max(0, Math.floor(totalSeconds));
+  function human(t) {
+    var s = Math.max(0, Math.floor(t));
     if (s < 60) return s + (s === 1 ? ' second' : ' seconds');
     var m = Math.floor(s / 60);
     if (m < 60) return m + (m === 1 ? ' minute' : ' minutes');
-    var h = Math.floor(m / 60);
-    var rem = m % 60;
-    var hours = h + (h === 1 ? ' hour' : ' hours');
-    if (!rem) return hours;
-    return hours + ' ' + rem + (rem === 1 ? ' minute' : ' minutes');
+    var h = Math.floor(m / 60), rem = m % 60;
+    var hrs = h + (h === 1 ? ' hour' : ' hours');
+    return rem ? hrs + ' ' + rem + (rem === 1 ? ' minute' : ' minutes') : hrs;
   }
-
-  function showLapsed() {
-    detailsCard.hidden = true;
-    actionArea.hidden = true;
-    expiryNotice.hidden = true;
-    lapsedArea.hidden = false;
-  }
-
-  function showDone() {
-    detailsCard.hidden = true;
-    actionArea.hidden = true;
-    expiryNotice.hidden = true;
-    doneArea.hidden = false;
-  }
-
+  function hideAll() { detailsCard.hidden = true; actionArea.hidden = true; expiryNotice.hidden = true; otpArea.hidden = true; }
+  function showLapsed() { hideAll(); lapsedArea.hidden = false; }
+  function showDone() { hideAll(); doneArea.hidden = false; }
   function tick() {
     if (!expiresAtMs) return;
     var left = Math.floor((expiresAtMs - Date.now()) / 1000);
@@ -264,41 +326,87 @@ ${renderSections(details)}
   }
   tick();
 
-  btn.addEventListener('click', function () {
-    btn.disabled = true;
-    btn.textContent = 'Registering\\u2026';
-    errorText.hidden = true;
+  function bothChecked() { return !!(ackTerms.checked && ackData.checked); }
+  function refreshBtn() { btn.disabled = !bothChecked(); }
+  ackTerms.addEventListener('change', refreshBtn);
+  ackData.addEventListener('change', refreshBtn);
+  refreshBtn();
 
-    fetch(actionUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token: token })
-    })
-      .then(function (res) { return res.json().then(function (b) { return { ok: res.ok, body: b }; }); })
-      .then(function (res) {
-        if (res.body && res.body.status === 'completed') { showDone(); return; }
-        if (res.body && res.body.status === 'expired') { showLapsed(); return; }
-        throw new Error((res.body && res.body.message) || 'Could not complete the registration right now.');
+  function fail(el, msg) { el.textContent = msg; el.hidden = false; }
+  function register(idToken) {
+    var payload = { token: token, acceptedTerms: true, acceptedDataForTraining: true };
+    if (idToken) payload.idToken = idToken;
+    return fetch(actionUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+      .then(function (res) { return res.json().then(function (b) { return { ok: res.ok, body: b }; }); });
+  }
+  function done(r) {
+    if (r.body && r.body.status === 'completed') { showDone(); return true; }
+    if (r.body && r.body.status === 'expired') { showLapsed(); return true; }
+    return false;
+  }
+  function otpMessage(err) {
+    var c = (err && err.code) || '';
+    if (c.indexOf('invalid-verification-code') >= 0) return 'That code is not correct. Please try again.';
+    if (c.indexOf('code-expired') >= 0) return 'That code has expired. Tap Resend code.';
+    if (c.indexOf('too-many-requests') >= 0) return 'Too many attempts. Please wait a few minutes and try again.';
+    if (c.indexOf('quota') >= 0) return 'The SMS limit was reached. Please try again later.';
+    if (c.indexOf('missing-phone') >= 0 || c.indexOf('invalid-phone') >= 0) return 'We could not send a code to the number on file.';
+    return (err && err.message) || 'Verification failed. Please try again.';
+  }
+
+  function confirmNoOtp() {
+    btn.disabled = true; btn.textContent = 'Registering...'; errorText.hidden = true;
+    register(null).then(function (r) {
+      if (done(r)) return;
+      throw new Error((r.body && r.body.message) || 'Could not complete the registration right now.');
+    }).catch(function (err) { btn.disabled = false; btn.textContent = PRIMARY; fail(errorText, err.message); });
+  }
+
+  var auth = null, verifier = null, confirmation = null;
+  function ensureVerifier() {
+    if (!auth) { auth = getAuth(initializeApp(FB)); }
+    if (!verifier) { verifier = new RecaptchaVerifier(auth, 'recaptcha-container', { size: 'invisible' }); }
+    return verifier;
+  }
+  function sendOtp() {
+    errorText.hidden = true; btn.disabled = true; btn.textContent = 'Sending code...';
+    var v;
+    try { v = ensureVerifier(); } catch (e) { btn.disabled = false; btn.textContent = PRIMARY; fail(errorText, 'Could not start phone verification.'); return; }
+    signInWithPhoneNumber(auth, PHONE, v).then(function (res) {
+      confirmation = res;
+      actionArea.hidden = true; otpArea.hidden = false;
+      if (otpCode) { otpCode.value = ''; otpCode.focus(); }
+    }).catch(function (err) {
+      btn.disabled = false; btn.textContent = PRIMARY;
+      fail(errorText, otpMessage(err));
+    });
+  }
+  function verifyOtp() {
+    var code = (otpCode.value || '').replace(/\\D/g, '');
+    if (code.length < 6) { fail(otpError, 'Enter the 6-digit code.'); return; }
+    if (!confirmation) { fail(otpError, 'Please tap Resend code.'); return; }
+    otpError.hidden = true; otpVerifyBtn.disabled = true; otpVerifyBtn.textContent = 'Verifying...';
+    confirmation.confirm(code)
+      .then(function (cred) { return cred.user.getIdToken(); })
+      .then(function (idToken) { return register(idToken); })
+      .then(function (r) {
+        if (done(r)) return;
+        throw new Error((r.body && r.body.message) || 'Could not complete the registration.');
       })
-      .catch(function (err) {
-        btn.disabled = false;
-        btn.textContent = 'Confirm and complete registration';
-        errorText.textContent = err.message || 'Something went wrong. Please try again.';
-        errorText.hidden = false;
-      });
-  });
-})();
-</script>`;
+      .catch(function (err) { otpVerifyBtn.disabled = false; otpVerifyBtn.textContent = 'Verify & register'; fail(otpError, otpMessage(err)); });
+  }
 
-    return shell({ title: 'Confirm your registration — Feston', logoUrl, body, script });
-}
+  btn.addEventListener('click', function () {
+    if (!bothChecked()) return;
+    if (OTP_ON) { sendOtp(); } else { confirmNoOtp(); }
+  });
+  if (otpVerifyBtn) otpVerifyBtn.addEventListener('click', verifyOtp);
+  if (otpResendBtn) otpResendBtn.addEventListener('click', function () { otpArea.hidden = true; actionArea.hidden = false; sendOtp(); });
+  if (otpBackBtn) otpBackBtn.addEventListener('click', function () { otpArea.hidden = true; actionArea.hidden = false; btn.disabled = !bothChecked(); btn.textContent = PRIMARY; });
+})();`;
 
 /**
  * Already registered — reached by reopening the link after confirming.
- *
- * The details are shown again on purpose: this is the only record of the
- * registration the customer can reach without logging in, and reopening the
- * link to check what was submitted is a reasonable thing to want to do.
  */
 function renderConfirmedPage({ details, logoUrl }) {
     const body = `
@@ -317,9 +425,6 @@ ${renderSections(details)}
 
 /**
  * Expired, cancelled, unknown and broken links share a page with no details.
- *
- * Nothing about the registration is rendered here, because a lapsed or invented
- * token should never be a way to read a customer's name and address.
  */
 const UNAVAILABLE_COPY = {
     expired: {
