@@ -195,7 +195,7 @@ function maskPhone(e164) {
  * OTP off it posts straight away. The countdown is a courtesy — the real expiry
  * is re-checked on the server when the request lands.
  */
-function renderPendingPage({ details, expiresAt, actionUrl, token, logoUrl, otpEnabled, phoneE164, firebaseConfig }) {
+function renderPendingPage({ details, expiresAt, actionUrl, token, logoUrl, otpEnabled, otpTestMode, phoneE164, firebaseConfig }) {
     const remaining = secondsRemaining(expiresAt);
     const otp = !!otpEnabled && !!phoneE164;
     const masked = maskPhone(phoneE164);
@@ -272,6 +272,7 @@ ${renderSections(details)}
         `var OTP_ON = ${otp ? 'true' : 'false'};` +
         `var PHONE = ${JSON.stringify(phoneE164 || '')};` +
         `var FB = ${JSON.stringify(otp ? firebaseConfig : null)};` +
+        `var OTP_TEST = ${otp && otpTestMode ? 'true' : 'false'};` +
         `var PRIMARY = ${JSON.stringify(otp ? 'Verify phone & register' : 'Confirm and complete registration')};`;
 
     const imports = otp
@@ -364,7 +365,12 @@ const PAGE_RUNTIME = `
 
   var auth = null, verifier = null, confirmation = null;
   function ensureVerifier() {
-    if (!auth) { auth = getAuth(initializeApp(FB)); }
+    if (!auth) {
+      auth = getAuth(initializeApp(FB));
+      // Testing only: bypass the reCAPTCHA app check so a Firebase TEST number +
+      // fixed code verifies without a real reCAPTCHA/SMS. Off in production.
+      if (OTP_TEST) { try { auth.settings.appVerificationDisabledForTesting = true; } catch (e) {} }
+    }
     if (!verifier) { verifier = new RecaptchaVerifier(auth, 'recaptcha-container', { size: 'invisible' }); }
     return verifier;
   }

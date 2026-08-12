@@ -31,7 +31,7 @@ const cors = require('cors')({ origin: true });
 
 admin.initializeApp();
 
-const { LOGO_URL, linkFor, FIREBASE_WEB_CONFIG, OTP_ENABLED } = require('./lib/config');
+const { LOGO_URL, linkFor, FIREBASE_WEB_CONFIG, OTP_ENABLED, OTP_TEST_MODE } = require('./lib/config');
 const { isValidToken } = require('./lib/tokens');
 const { isExpired } = require('./lib/expiry');
 const { buildDetailsFromRegistration, hasAnyDetail } = require('./lib/snapshot');
@@ -139,6 +139,7 @@ async function handlePage(res, token) {
             token,
             logoUrl: LOGO_URL,
             otpEnabled: OTP_ENABLED,
+            otpTestMode: OTP_TEST_MODE,
             phoneE164,
             firebaseConfig: FIREBASE_WEB_CONFIG,
         }),

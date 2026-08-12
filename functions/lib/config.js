@@ -78,6 +78,14 @@ const FIREBASE_WEB_CONFIG = {
  */
 const OTP_ENABLED = String(process.env.CONFIRM_OTP_ENABLED || 'true').toLowerCase() !== 'false';
 
+/**
+ * Testing only. When true the page sets appVerificationDisabledForTesting, which
+ * bypasses the reCAPTCHA app check so a Firebase TEST phone number + fixed code
+ * verifies without a real reCAPTCHA or SMS. MUST be false in production — it
+ * turns off the anti-abuse gate. Off by default.
+ */
+const OTP_TEST_MODE = String(process.env.CONFIRM_OTP_TEST_MODE || 'false').toLowerCase() === 'true';
+
 function linkFor(token) {
     return `${PUBLIC_BASE_URL}?t=${encodeURIComponent(token)}`;
 }
@@ -90,6 +98,7 @@ module.exports = {
     LOGO_URL,
     FIREBASE_WEB_CONFIG,
     OTP_ENABLED,
+    OTP_TEST_MODE,
     TTL_MINUTES,
     TTL_HOURS,
     linkFor,
