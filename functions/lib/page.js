@@ -337,7 +337,12 @@ const PAGE_RUNTIME = `
   function register(idToken) {
     var payload = { token: token, acceptedTerms: true, acceptedDataForTraining: true };
     if (idToken) payload.idToken = idToken;
-    return fetch(actionUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+    // POST to THIS page's own URL (same-origin; the token is already in ?t=).
+    // Using the current URL rather than the absolute link base avoids a
+    // cross-origin fetch when the served origin differs from that base — e.g.
+    // opening the page on localhost while the base is a LAN IP.
+    var postUrl = window.location.pathname + window.location.search;
+    return fetch(postUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
       .then(function (res) { return res.json().then(function (b) { return { ok: res.ok, body: b }; }); });
   }
   function done(r) {
