@@ -148,6 +148,24 @@ async function completeRegistration(token, { userAgent, verifiedPhone, requirePh
             if (!serialDoc.exists) serialRef = null;
         }
 
+        // Reward the installer who initiated this registration. Read the point
+        // value now — every read must precede every write — and award below.
+        const installerId =
+            typeof pending.registeredByInstallerId === 'string'
+                ? pending.registeredByInstallerId.trim()
+                : '';
+        let awardPoints = 0;
+        if (installerId) {
+            const cfgDoc = await tx.get(
+                firestore.collection('points_config').doc('complete_registration'),
+            );
+            if (cfgDoc.exists) {
+                const c = cfgDoc.data() || {};
+                const n = Number(c.points);
+                if (c.active !== false && Number.isFinite(n) && n > 0) awardPoints = n;
+            }
+        }
+
         const confirmedAt = admin.firestore.Timestamp.now();
         const registrationRef = firestore.collection(REGISTRATIONS_COLLECTION).doc();
 
@@ -167,6 +185,22 @@ async function completeRegistration(token, { userAgent, verifiedPhone, requirePh
             completedAt: confirmedAt,
             completedUserAgent: (userAgent || '').slice(0, 300),
         });
+
+        // Installer reward: running total on the installer + a ledger row, in
+        // the same transaction as the registration.
+        if (installerId && awardPoints > 0) {
+            tx.update(firestore.collection('installers').doc(installerId), {
+                points: admin.firestore.FieldValue.increment(awardPoints),
+                pointsUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+            tx.set(firestore.collection('installer_points').doc(), {
+                installerId,
+                action: 'complete_registration',
+                points: awardPoints,
+                registrationId: registrationRef.id,
+                createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+        }
 
         return {
             status: 'completed',
