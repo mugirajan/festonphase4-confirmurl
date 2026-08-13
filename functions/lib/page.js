@@ -235,7 +235,9 @@ ${renderSections(details)}
 </div>
 
 <div class="actions" id="otp-area" hidden>
-  <p class="lede">Enter the 6-digit code sent to <strong>${escapeHtml(masked)}</strong>.</p>
+  <h1>Verify your phone</h1>
+  <div class="rule"></div>
+  <p class="lede">Enter the 6-digit code sent to <strong>${escapeHtml(masked)}</strong> to complete your registration.</p>
   <input class="otp-input" id="otp-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="------" />
   <button class="primary" id="otp-verify-btn" type="button">Verify &amp; register</button>
   <div class="otp-links">
@@ -385,7 +387,7 @@ const PAGE_RUNTIME = `
     try { v = ensureVerifier(); } catch (e) { btn.disabled = false; btn.textContent = PRIMARY; fail(errorText, 'Could not start phone verification.'); return; }
     signInWithPhoneNumber(auth, PHONE, v).then(function (res) {
       confirmation = res;
-      actionArea.hidden = true; otpArea.hidden = false;
+      actionArea.hidden = true; detailsCard.hidden = true; expiryNotice.hidden = true; otpArea.hidden = false;
       if (otpCode) { otpCode.value = ''; otpCode.focus(); }
     }).catch(function (err) {
       btn.disabled = false; btn.textContent = PRIMARY;
@@ -412,8 +414,8 @@ const PAGE_RUNTIME = `
     if (OTP_ON) { sendOtp(); } else { confirmNoOtp(); }
   });
   if (otpVerifyBtn) otpVerifyBtn.addEventListener('click', verifyOtp);
-  if (otpResendBtn) otpResendBtn.addEventListener('click', function () { otpArea.hidden = true; actionArea.hidden = false; sendOtp(); });
-  if (otpBackBtn) otpBackBtn.addEventListener('click', function () { otpArea.hidden = true; actionArea.hidden = false; btn.disabled = !bothChecked(); btn.textContent = PRIMARY; });
+  if (otpResendBtn) otpResendBtn.addEventListener('click', function () { sendOtp(); });
+  if (otpBackBtn) otpBackBtn.addEventListener('click', function () { otpArea.hidden = true; actionArea.hidden = false; detailsCard.hidden = false; expiryNotice.hidden = false; btn.disabled = !bothChecked(); btn.textContent = PRIMARY; });
 })();`;
 
 /**
