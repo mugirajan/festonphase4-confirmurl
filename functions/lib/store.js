@@ -148,21 +148,57 @@ async function completeRegistration(token, { userAgent, verifiedPhone, requirePh
             if (!serialDoc.exists) serialRef = null;
         }
 
-        // Reward the installer who initiated this registration. Read the point
-        // value now — every read must precede every write — and award below.
+        // Credit the installer who initiated this registration: an install on
+        // their lifetime count, and the reward points for completing it.
+        //
+        // Every read must precede every write, so the installer, their company
+        // and the point value are all fetched here and written further down.
+        //
+        // The two are DELIBERATELY INDEPENDENT. An install happened whether or
+        // not points were payable — `complete_registration` could be paused in
+        // `points_config`, or set to zero — and the lifetime count is a record of
+        // work done, not of reward policy. Tying the count to the award would
+        // silently stop counting installs the moment someone paused the payout.
         const installerId =
             typeof pending.registeredByInstallerId === 'string'
                 ? pending.registeredByInstallerId.trim()
                 : '';
+
         let awardPoints = 0;
+        let installerRef = null;
+        let companyRef = null;
+
         if (installerId) {
-            const cfgDoc = await tx.get(
-                firestore.collection('points_config').doc('complete_registration'),
-            );
-            if (cfgDoc.exists) {
-                const c = cfgDoc.data() || {};
-                const n = Number(c.points);
-                if (c.active !== false && Number.isFinite(n) && n > 0) awardPoints = n;
+            const ref = firestore.collection('installers').doc(installerId);
+            const installerDoc = await tx.get(ref);
+
+            // An installer deleted between staging the link and the customer
+            // confirming must not fail the registration. `tx.update` on a
+            // missing document throws and would take the whole transaction —
+            // and with it the customer's registration — down with it. The
+            // registration is the thing that matters; the credit is not.
+            if (installerDoc.exists) {
+                installerRef = ref;
+
+                // The company's lifetime count is the sum of its installers', so
+                // it moves in the same transaction. Read first for the same
+                // reason: a company deleted or renamed away underneath its
+                // installers must not cost the customer their registration.
+                const companyId = (installerDoc.data() || {}).companyId;
+                if (typeof companyId === 'string' && companyId.trim()) {
+                    const cRef = firestore.collection('companies').doc(companyId.trim());
+                    const companyDoc = await tx.get(cRef);
+                    if (companyDoc.exists) companyRef = cRef;
+                }
+
+                const cfgDoc = await tx.get(
+                    firestore.collection('points_config').doc('complete_registration'),
+                );
+                if (cfgDoc.exists) {
+                    const c = cfgDoc.data() || {};
+                    const n = Number(c.points);
+                    if (c.active !== false && Number.isFinite(n) && n > 0) awardPoints = n;
+                }
             }
         }
 
@@ -186,13 +222,42 @@ async function completeRegistration(token, { userAgent, verifiedPhone, requirePh
             completedUserAgent: (userAgent || '').slice(0, 300),
         });
 
-        // Installer reward: running total on the installer + a ledger row, in
-        // the same transaction as the registration.
-        if (installerId && awardPoints > 0) {
-            tx.update(firestore.collection('installers').doc(installerId), {
-                points: admin.firestore.FieldValue.increment(awardPoints),
-                pointsUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
-            });
+        // Installer credit: the lifetime install count, the running points total
+        // and a ledger row — all in the same transaction as the registration, so
+        // a registration can never exist without its credit or vice versa.
+        //
+        // This whole block is reached only once per token: the transaction
+        // returns early above when the pending document is already `completed`,
+        // so a customer re-opening the confirm link cannot count the install
+        // twice.
+        if (installerRef) {
+            const installerUpdate = {
+                // The count the admin portal reads on the installers register,
+                // and which the company figure below is the sum of.
+                lifetimeInstalls: admin.firestore.FieldValue.increment(1),
+                lastInstallAt: admin.firestore.FieldValue.serverTimestamp(),
+            };
+
+            if (awardPoints > 0) {
+                installerUpdate.points = admin.firestore.FieldValue.increment(awardPoints);
+                installerUpdate.pointsUpdatedAt = admin.firestore.FieldValue.serverTimestamp();
+            }
+
+            tx.update(installerRef, installerUpdate);
+
+            // Keep the company's rollup in step with its installers'. Both are
+            // rollups of the same installs, so they are incremented together;
+            // letting only one move is what makes a badge tier disagree with the
+            // roster it is supposedly derived from.
+            if (companyRef) {
+                tx.update(companyRef, {
+                    lifetimeInstalls: admin.firestore.FieldValue.increment(1),
+                    lastInstallAt: admin.firestore.FieldValue.serverTimestamp(),
+                });
+            }
+        }
+
+        if (installerRef && awardPoints > 0) {
             tx.set(firestore.collection('installer_points').doc(), {
                 installerId,
                 action: 'complete_registration',

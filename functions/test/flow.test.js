@@ -76,7 +76,18 @@ const firestoreApi = () => ({
                     // Matches Firestore: update on a missing document throws.
                     throw new Error(`No document to update: ${key(ref._collection, ref._id)}`);
                 }
-                documents.set(key(ref._collection, ref._id), { ...existing, ...data });
+                // Resolve increment sentinels against what is already stored, so
+                // a test can assert on the resulting NUMBER rather than on a
+                // sentinel object. Without this the fake would silently store
+                // `{__increment: 1}` where the real Firestore stores a count.
+                const resolved = {};
+                for (const [field, value] of Object.entries(data)) {
+                    resolved[field] =
+                        value && typeof value === 'object' && '__increment' in value
+                            ? (Number(existing[field]) || 0) + value.__increment
+                            : value;
+                }
+                documents.set(key(ref._collection, ref._id), { ...existing, ...resolved });
             },
             set: (ref, data, options) => ref.set(data, options),
         };
@@ -88,7 +99,14 @@ firestoreApi.Timestamp = {
     fromMillis: (millis) => makeTimestamp(millis),
     now: () => makeTimestamp(Date.now()),
 };
-firestoreApi.FieldValue = { serverTimestamp: () => makeTimestamp(Date.now()) };
+firestoreApi.FieldValue = {
+    serverTimestamp: () => makeTimestamp(Date.now()),
+    // Sentinel resolved by the fake `update` above. Absent until 2026-08-18,
+    // which is why the installer-credit path went untested: `increment` was
+    // undefined, and the only test that set `registeredByInstallerId` never
+    // seeded an installer document, so the branch was never entered.
+    increment: (n) => ({ __increment: n }),
+};
 
 const fakeAdmin = {
     initializeApp() {},
@@ -374,4 +392,99 @@ test('a record with no serialDocId still registers the product', async () => {
     assert.equal(res.statusCode, 200);
     assert.equal(registrations().length, 1);
     assert.equal(serialDoc().registered, false);
+});
+
+// --- installer credit ---------------------------------------------------------
+//
+// A completed registration is the only thing that moves an installer's lifetime
+// install count, and the company's is the sum of its installers'. Both are read
+// by the admin portal — the installers register, the company register and the
+// badge tier derived from the company total — so getting them wrong is visible
+// to Feston staff and to the installer being paid.
+//
+// Nothing incremented either field before 2026-08-18: the confirm transaction
+// awarded points and stopped there, so every count in the portal was whatever
+// had been seeded into it.
+
+/** Seed an installer, their company, and the point value for a completion. */
+function seedInstaller({ installs = 10, companyInstalls = 10, points = 50, active = true } = {}) {
+    documents.set(key('installers', 'inst_55'), {
+        name: 'Muthu Kumar',
+        companyId: 'co_9',
+        lifetimeInstalls: installs,
+        points: 0,
+        active,
+    });
+    documents.set(key('companies', 'co_9'), {
+        name: 'Rppl Solar',
+        lifetimeInstalls: companyInstalls,
+    });
+    if (points !== null) {
+        documents.set(key('points_config', 'complete_registration'), { points, active: true });
+    }
+}
+
+const installerDoc = () => documents.get(key('installers', 'inst_55'));
+const companyDoc = () => documents.get(key('companies', 'co_9'));
+
+test('confirming credits the installer and their company with one install', async () => {
+    seedPending();
+    seedInstaller({ installs: 10, companyInstalls: 10 });
+
+    await pressConfirm(TOKEN);
+
+    assert.equal(installerDoc().lifetimeInstalls, 11, "installer's lifetime count moves by one");
+    assert.equal(companyDoc().lifetimeInstalls, 11, "company's rollup moves with it");
+    assert.equal(installerDoc().points, 50, 'and the completion points are awarded');
+});
+
+test('confirming twice counts the install once', async () => {
+    seedPending();
+    seedInstaller({ installs: 10, companyInstalls: 10 });
+
+    await pressConfirm(TOKEN);
+    await pressConfirm(TOKEN);
+
+    // The transaction returns early once the pending row is `completed`, so a
+    // customer re-opening the link cannot inflate the count.
+    assert.equal(installerDoc().lifetimeInstalls, 11, 'not 12');
+    assert.equal(companyDoc().lifetimeInstalls, 11, 'not 12');
+    assert.equal(installerDoc().points, 50, 'and the points are awarded once');
+});
+
+test('an install still counts when the points award is paused', async () => {
+    seedPending();
+    seedInstaller({ installs: 10, companyInstalls: 10, points: null });
+    // No `points_config` document at all — nothing is payable.
+
+    await pressConfirm(TOKEN);
+
+    // The count records work done, not reward policy. Tying it to the award
+    // would silently stop counting installs the moment a payout was paused.
+    assert.equal(installerDoc().lifetimeInstalls, 11, 'the install is still counted');
+    assert.equal(installerDoc().points, 0, 'but nothing is paid');
+    assert.equal(registrations().length, 1, 'and the registration is created');
+});
+
+test('a deleted installer does not cost the customer their registration', async () => {
+    seedPending();
+    // `registeredByInstallerId` points at an installer that no longer exists —
+    // deleted between the link being staged and the customer confirming.
+
+    const res = await pressConfirm(TOKEN);
+
+    assert.equal(res.body.status, 'completed');
+    assert.equal(registrations().length, 1, 'the registration is the thing that matters');
+    assert.equal(serialDoc().registered, true, 'and the serial is still flipped');
+});
+
+test('a deleted company does not stop the installer being credited', async () => {
+    seedPending();
+    seedInstaller({ installs: 10 });
+    documents.delete(key('companies', 'co_9'));
+
+    await pressConfirm(TOKEN);
+
+    assert.equal(installerDoc().lifetimeInstalls, 11, 'the installer is still credited');
+    assert.equal(registrations().length, 1, 'and the registration stands');
 });
