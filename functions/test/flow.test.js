@@ -488,3 +488,62 @@ test('a deleted company does not stop the installer being credited', async () =>
     assert.equal(installerDoc().lifetimeInstalls, 11, 'the installer is still credited');
     assert.equal(registrations().length, 1, 'and the registration stands');
 });
+
+// --- capacity stamped from the serial ----------------------------------------
+//
+// `serial_num` is the authoritative source for kilowatt and the registration has
+// never carried it, so the admin portal's "kW commissioned" KPI had to join
+// 20,100 inventory documents back to a handful of installs. Copying it onto the
+// registration at confirm time — while the serial document is already open in
+// the transaction — removes that join for every future registration.
+
+test('confirming copies the capacity from the serial onto the registration', async () => {
+    seedPending();
+    documents.set(key('serial_num', SERIAL_DOC_ID), {
+        serialnumber: '2505063529',
+        registered: false,
+        // Stored as a STRING in production, which is the point of parsing it.
+        kilowatt: '3.3',
+    });
+
+    await pressConfirm(TOKEN);
+
+    const row = registrations()[0];
+    assert.equal(row.capacityKw, 3.3, 'stored as a number, not the string it came from');
+});
+
+test('a serial with no capacity leaves the field null, not zero', async () => {
+    seedPending();
+    // `seedPending` writes a serial row with no `kilowatt` at all.
+
+    await pressConfirm(TOKEN);
+
+    const row = registrations()[0];
+    // Null is "not known"; 0 would be "a zero-kilowatt install", and the KPI
+    // must be able to tell those apart.
+    assert.equal(row.capacityKw, null);
+});
+
+test('a nonsense capacity is ignored rather than stored', async () => {
+    seedPending();
+    documents.set(key('serial_num', SERIAL_DOC_ID), {
+        serialnumber: '2505063529',
+        registered: false,
+        kilowatt: 'three point three',
+    });
+
+    await pressConfirm(TOKEN);
+
+    assert.equal(registrations()[0].capacityKw, null, 'NaN never reaches the registration');
+});
+
+test('a serial missing from inventory still registers, with no capacity', async () => {
+    seedPending();
+    documents.delete(key('serial_num', SERIAL_DOC_ID));
+
+    const res = await pressConfirm(TOKEN);
+
+    assert.equal(res.body.status, 'completed');
+    assert.equal(registrations().length, 1, 'the registration is what matters');
+    assert.equal(registrations()[0].capacityKw, null);
+});

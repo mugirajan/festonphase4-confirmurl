@@ -139,6 +139,7 @@ async function completeRegistration(token, { userAgent, verifiedPhone, requirePh
         // document is fetched before anything is set.
         const serialDocId = typeof pending.serialDocId === 'string' ? pending.serialDocId.trim() : '';
         let serialRef = null;
+        let capacityKw = null;
         if (serialDocId) {
             serialRef = firestore.collection(SERIALS_COLLECTION).doc(serialDocId);
             const serialDoc = await tx.get(serialRef);
@@ -146,6 +147,25 @@ async function completeRegistration(token, { userAgent, verifiedPhone, requirePh
             // customer's registration over — record that it was not flipped and
             // let the row be created.
             if (!serialDoc.exists) serialRef = null;
+            else {
+                // Copy the capacity onto the registration while we have the serial
+                // document open. `serial_num` is the authoritative source for
+                // kilowatt, and the registration has never carried it — so the
+                // admin portal's "kW commissioned" KPI had to join 20,100 serial
+                // documents back to a handful of installs to get a number.
+                //
+                // Stamping it here removes that join for every future
+                // registration. It is deliberately a SNAPSHOT: if someone later
+                // corrects the inventory row, this registration keeps the capacity
+                // that was true when the customer confirmed it, which is what a
+                // warranty record should say.
+                //
+                // Stored as a NUMBER. `serial_num.kilowatt` is a string ("50",
+                // "3.3") and leaving it as one would push the parsing onto every
+                // reader, which is how one of them ends up summing strings.
+                const kw = Number((serialDoc.data() || {}).kilowatt);
+                if (Number.isFinite(kw) && kw > 0) capacityKw = kw;
+            }
         }
 
         // Credit the installer who initiated this registration: an install on
@@ -208,6 +228,9 @@ async function completeRegistration(token, { userAgent, verifiedPhone, requirePh
         tx.set(registrationRef, {
             ...payloadFields(pending),
             userId,
+            // Null when the serial was not in inventory — absent rather than 0, so
+            // a reader can tell "not known" from "a zero-kilowatt install".
+            capacityKw,
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
             ...confirmationMarkers(confirmedAt),
             ...consentFields(acknowledgements, verifiedPhone),
