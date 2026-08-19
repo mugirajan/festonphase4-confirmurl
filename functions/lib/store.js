@@ -5,6 +5,7 @@ const admin = require('firebase-admin');
 const { PENDING_COLLECTION, REGISTRATIONS_COLLECTION, SERIALS_COLLECTION } = require('./config');
 const { isExpired } = require('./expiry');
 const { payloadFields } = require('./payload');
+const { resolveAward } = require('./award-rule');
 
 /**
  * Firestore access for the confirmation flow.
@@ -185,6 +186,8 @@ async function completeRegistration(token, { userAgent, verifiedPhone, requirePh
                 : '';
 
         let awardPoints = 0;
+        /** 'per-kw' or 'flat' — recorded so the ledger says how it was worked out. */
+        let awardBasis = 'flat';
         let installerRef = null;
         let companyRef = null;
 
@@ -214,11 +217,39 @@ async function completeRegistration(token, { userAgent, verifiedPhone, requirePh
                 const cfgDoc = await tx.get(
                     firestore.collection('points_config').doc('complete_registration'),
                 );
+                let flatPoints = 0;
                 if (cfgDoc.exists) {
                     const c = cfgDoc.data() || {};
                     const n = Number(c.points);
-                    if (c.active !== false && Number.isFinite(n) && n > 0) awardPoints = n;
+                    if (c.active !== false && Number.isFinite(n) && n > 0) flatPoints = n;
                 }
+
+                // A per-kW rate for this product family, if Feston has priced it.
+                // Read here because every read must precede every write; the
+                // family comes off the pending record, which is what the app
+                // recorded at review time.
+                const family = String(pending.productFamily || pending.family || '').trim();
+                let ratePerKw = null;
+                let rateActive = false;
+                if (family) {
+                    const rateDoc = await tx.get(firestore.collection('points_rates').doc(family));
+                    if (rateDoc.exists) {
+                        const r = rateDoc.data() || {};
+                        ratePerKw = Number(r.pointsPerKw);
+                        rateActive = r.active !== false;
+                    }
+                }
+
+                // Per-kW when priced and the capacity is known, flat otherwise.
+                // `capacityKw` was resolved above from the serial document.
+                const award = resolveAward({
+                    flatPoints,
+                    ratePerKw,
+                    rateActive,
+                    capacityKw,
+                });
+                awardPoints = award.points;
+                awardBasis = award.basis;
             }
         }
 
@@ -285,6 +316,10 @@ async function completeRegistration(token, { userAgent, verifiedPhone, requirePh
                 installerId,
                 action: 'complete_registration',
                 points: awardPoints,
+                // How the figure was reached, so a ledger row can be explained
+                // later without re-deriving it from config that may have moved.
+                awardBasis,
+                capacityKw,
                 registrationId: registrationRef.id,
                 createdAt: admin.firestore.FieldValue.serverTimestamp(),
             });

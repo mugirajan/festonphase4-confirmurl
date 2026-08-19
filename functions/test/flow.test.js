@@ -547,3 +547,96 @@ test('a serial missing from inventory still registers, with no capacity', async 
     assert.equal(registrations().length, 1, 'the registration is what matters');
     assert.equal(registrations()[0].capacityKw, null);
 });
+
+// --- per-kW award by product family ------------------------------------------
+//
+// `complete_registration` pays a FLAT value. A per-kW rate, when Feston has
+// priced the family and the install's capacity is known, replaces it — so a
+// 50 kW micro-inverter is not worth the same as a 3 kW on-grid.
+//
+// The flat value is the FALLBACK, not the floor: an unpriced family, an inactive
+// rate, or an unknown capacity all still earn the flat award. That is what makes
+// rolling this out family by family safe.
+
+/** Seed the installer, the flat value, and optionally a family rate. */
+function seedAward({ flat = 50, kilowatt = null, family = 'ongrid', rate = null, rateActive = true } = {}) {
+    documents.set(key('installers', 'inst_55'), {
+        name: 'Muthu Kumar', companyId: 'co_9', lifetimeInstalls: 0, points: 0, active: true,
+    });
+    documents.set(key('companies', 'co_9'), { name: 'Rppl Solar', lifetimeInstalls: 0 });
+    documents.set(key('points_config', 'complete_registration'), { points: flat, active: true });
+
+    const serial = { serialnumber: '2505063529', registered: false };
+    if (kilowatt !== null) serial.kilowatt = kilowatt;
+    documents.set(key('serial_num', SERIAL_DOC_ID), serial);
+
+    if (rate !== null) {
+        documents.set(key('points_rates', family), { pointsPerKw: rate, active: rateActive });
+    }
+}
+
+const ledgerRows = () =>
+    [...documents.entries()].filter(([k]) => k.startsWith('installer_points/')).map(([, v]) => v);
+
+test('with no family rate, the flat award is paid', async () => {
+    seedPending({ productFamily: 'ongrid' });
+    seedAward({ flat: 50, kilowatt: '5' });
+
+    await pressConfirm(TOKEN);
+
+    assert.equal(documents.get(key('installers', 'inst_55')).points, 50);
+    assert.equal(ledgerRows()[0].awardBasis, 'flat');
+});
+
+test('a priced family pays per kW instead of the flat value', async () => {
+    seedPending({ productFamily: 'ongrid' });
+    seedAward({ flat: 50, kilowatt: '5', family: 'ongrid', rate: 10 });
+
+    await pressConfirm(TOKEN);
+
+    // 5 kW x 10 = 50 — same number here, but reached a different way.
+    const row = ledgerRows()[0];
+    assert.equal(row.points, 50);
+    assert.equal(row.awardBasis, 'per-kw', 'and the ledger records how');
+    assert.equal(row.capacityKw, 5);
+});
+
+test('a large install earns proportionally more — the point of the feature', async () => {
+    seedPending({ productFamily: 'micro-inverter' });
+    seedAward({ flat: 50, kilowatt: '50', family: 'micro-inverter', rate: 10 });
+
+    await pressConfirm(TOKEN);
+
+    assert.equal(documents.get(key('installers', 'inst_55')).points, 500, '50 kW x 10, not the flat 50');
+});
+
+test('an INACTIVE rate falls back to the flat award', async () => {
+    seedPending({ productFamily: 'ongrid' });
+    seedAward({ flat: 50, kilowatt: '50', family: 'ongrid', rate: 10, rateActive: false });
+
+    await pressConfirm(TOKEN);
+
+    assert.equal(documents.get(key('installers', 'inst_55')).points, 50);
+    assert.equal(ledgerRows()[0].awardBasis, 'flat');
+});
+
+test('a priced family with UNKNOWN capacity falls back rather than paying nothing', async () => {
+    seedPending({ productFamily: 'ongrid' });
+    // No `kilowatt` on the serial at all.
+    seedAward({ flat: 50, kilowatt: null, family: 'ongrid', rate: 10 });
+
+    await pressConfirm(TOKEN);
+
+    assert.equal(documents.get(key('installers', 'inst_55')).points, 50, 'the installer is not penalised');
+    assert.equal(ledgerRows()[0].awardBasis, 'flat');
+});
+
+test('an unpriced family is unaffected by another family being priced', async () => {
+    seedPending({ productFamily: 'hybrid' });
+    // Only on-grid is priced; this install is hybrid.
+    seedAward({ flat: 50, kilowatt: '20', family: 'ongrid', rate: 10 });
+
+    await pressConfirm(TOKEN);
+
+    assert.equal(documents.get(key('installers', 'inst_55')).points, 50, 'hybrid still earns the flat award');
+});
