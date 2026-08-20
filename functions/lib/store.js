@@ -190,6 +190,12 @@ async function completeRegistration(token, { userAgent, verifiedPhone, requirePh
         let awardBasis = 'flat';
         let installerRef = null;
         let companyRef = null;
+        // The company this award belongs to, kept alongside the ref because the
+        // ledger row needs the id itself. Without it the reward dashboard cannot
+        // attribute a completion award to anyone: `installer_points` is keyed by
+        // installer, and the portal was left joining every row back through the
+        // installer list to find out whose it was.
+        let awardCompanyId = '';
 
         if (installerId) {
             const ref = firestore.collection('installers').doc(installerId);
@@ -209,6 +215,7 @@ async function completeRegistration(token, { userAgent, verifiedPhone, requirePh
                 // installers must not cost the customer their registration.
                 const companyId = (installerDoc.data() || {}).companyId;
                 if (typeof companyId === 'string' && companyId.trim()) {
+                    awardCompanyId = companyId.trim();
                     const cRef = firestore.collection('companies').doc(companyId.trim());
                     const companyDoc = await tx.get(cRef);
                     if (companyDoc.exists) companyRef = cRef;
@@ -314,6 +321,7 @@ async function completeRegistration(token, { userAgent, verifiedPhone, requirePh
         if (installerRef && awardPoints > 0) {
             tx.set(firestore.collection('installer_points').doc(), {
                 installerId,
+                    companyId: awardCompanyId,
                 action: 'complete_registration',
                 points: awardPoints,
                 // How the figure was reached, so a ledger row can be explained
