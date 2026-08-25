@@ -6,6 +6,7 @@ const { PENDING_COLLECTION, REGISTRATIONS_COLLECTION, SERIALS_COLLECTION } = req
 const { isExpired } = require('./expiry');
 const { payloadFields } = require('./payload');
 const { resolveAward } = require('./award-rule');
+const { isFirstInstall, registeredPromptly } = require('./system-awards');
 
 /**
  * Firestore access for the confirmation flow.
@@ -96,6 +97,28 @@ async function completeRegistration(token, { userAgent, verifiedPhone, requirePh
     const firestore = db();
     const ref = pendingRef(token);
 
+    /**
+     * Has the customer confirmed their email address?
+     *
+     * From Firebase AUTH, which is the only place that knows — not from the
+     * registration, because a typed address is not a deliverable one and the
+     * whole point of the rule is that somebody clicked the link in it.
+     *
+     * Non-fatal by design. An Auth lookup that fails, or an environment where
+     * `getUser` is unavailable (the local harness stubs only Firestore), must
+     * never take a customer's registration down. It just means the bonus is
+     * not earned this time.
+     */
+    const emailVerifiedFor = async (uid) => {
+        if (!uid) return false;
+        try {
+            const record = await admin.auth().getUser(uid);
+            return record.emailVerified === true;
+        } catch {
+            return false;
+        }
+    };
+
     return firestore.runTransaction(async (tx) => {
         const doc = await tx.get(ref);
         if (!doc.exists) return { status: 'not-found' };
@@ -185,9 +208,21 @@ async function completeRegistration(token, { userAgent, verifiedPhone, requirePh
                 ? pending.registeredByInstallerId.trim()
                 : '';
 
+        // Allocated BEFORE the awards so the system ones can key themselves on
+        // the row they belong to. `.doc()` reserves an id without writing.
+        const registrationRef = firestore.collection(REGISTRATIONS_COLLECTION).doc();
+        const registrationRefId = registrationRef.id;
+
         let awardPoints = 0;
         /** 'per-kw' or 'flat' — recorded so the ledger says how it was worked out. */
         let awardBasis = 'flat';
+
+        // The three SYSTEM awards (P6/B4) — derived, never claimed. Collected as
+        // {action, points, subject, awardKey} and written after the base award.
+        // See lib/system-awards.js for what each one means.
+        const systemAwards = [];
+        /** True when this completion is the engineer's first — read before the increment. */
+        let isFirstInstallForEngineer = false;
         let installerRef = null;
         let companyRef = null;
         // The company this award belongs to, kept alongside the ref because the
@@ -208,6 +243,10 @@ async function completeRegistration(token, { userAgent, verifiedPhone, requirePh
             // registration is the thing that matters; the credit is not.
             if (installerDoc.exists) {
                 installerRef = ref;
+
+                // BEFORE the increment below. Once `lifetimeInstalls` moves, the
+                // fact that this was their first is gone.
+                isFirstInstallForEngineer = isFirstInstall(installerDoc.data());
 
                 // The company's lifetime count is the sum of its installers', so
                 // it moves in the same transaction. Read first for the same
@@ -279,11 +318,66 @@ async function completeRegistration(token, { userAgent, verifiedPhone, requirePh
                 });
                 awardPoints = award.points;
                 awardBasis = award.basis;
+
+                // ── The system awards ────────────────────────────────────────
+                //
+                // Read every config document here, with the other reads, because
+                // a transaction must do all of its reading before any writing.
+                //
+                // Each one is skipped silently when its rule is paused or set to
+                // zero in Points Configuration. A paused rule is a deliberate
+                // decision by Feston, and paying it anyway would ignore them.
+                // The Auth lookup, awaited here so it happens once per
+                // completion rather than once per rule. Non-fatal — see the
+                // helper.
+                const customerEmailVerified = await emailVerifiedFor(userId);
+
+                const systemRules = [
+                    {
+                        key: 'registration_within_48h',
+                        subject: 'installer',
+                        // From the install date to when the INSTALLER submitted —
+                        // not to when the customer confirmed. The installer does
+                        // not control how long a customer takes to open a link.
+                        earned: registeredPromptly(pending.installationDate, pending.createdAt),
+                        awardKey: 'registration_within_48h:reg:' + registrationRefId,
+                    },
+                    {
+                        key: 'new_se_first_install',
+                        // Owed to the COMPANY — the scheme rewards a firm for
+                        // onboarding somebody who then did the work — but keyed
+                        // on the ENGINEER, so it is earned once per new engineer
+                        // rather than once ever.
+                        subject: 'company',
+                        earned: isFirstInstallForEngineer && !!awardCompanyId,
+                        awardKey: 'new_se_first_install:se:' + installerId,
+                    },
+                    {
+                        key: 'customer_email_verified',
+                        subject: 'installer',
+                        earned: customerEmailVerified,
+                        awardKey: 'customer_email_verified:cust:' + userId,
+                    },
+                ];
+
+                for (const rule of systemRules) {
+                    if (!rule.earned) continue;
+                    const cfg = await tx.get(firestore.collection('points_config').doc(rule.key));
+                    if (!cfg.exists) continue;
+                    const data = cfg.data() || {};
+                    const value = Number(data.points);
+                    if (data.active === false || !Number.isFinite(value) || value <= 0) continue;
+                    systemAwards.push({
+                        action: rule.key,
+                        points: Math.round(value),
+                        subject: rule.subject,
+                        awardKey: rule.awardKey,
+                    });
+                }
             }
         }
 
         const confirmedAt = admin.firestore.Timestamp.now();
-        const registrationRef = firestore.collection(REGISTRATIONS_COLLECTION).doc();
 
         tx.set(registrationRef, {
             ...payloadFields(pending),
@@ -338,6 +432,50 @@ async function completeRegistration(token, { userAgent, verifiedPhone, requirePh
                     lastInstallAt: admin.firestore.FieldValue.serverTimestamp(),
                 });
             }
+        }
+
+        // ── The system awards ────────────────────────────────────────────
+        //
+        // Written after the base award and separately, because they are separate
+        // awards: each is its own ledger row with its own action, so an installer
+        // reading their history sees WHY they were paid rather than one merged
+        // number they cannot account for.
+        //
+        // A company-subject award goes to `company_points`, not to the engineer.
+        // `new_se_first_install` rewards the FIRM for onboarding somebody who
+        // then did the work; paying the engineer would credit them for their own
+        // hiring.
+        for (const award of systemAwards) {
+            if (award.subject === 'company') {
+                if (!awardCompanyId) continue;
+                tx.set(firestore.collection('company_points').doc(), {
+                    companyId: awardCompanyId,
+                    action: award.action,
+                    points: award.points,
+                    type: 'credit',
+                    awardKey: award.awardKey,
+                    registrationId: registrationRef.id,
+                    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+                    createdByName: 'system',
+                });
+                continue;
+            }
+
+            if (!installerRef) continue;
+            tx.update(installerRef, {
+                points: admin.firestore.FieldValue.increment(award.points),
+                pointsUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+            tx.set(firestore.collection('installer_points').doc(), {
+                installerId,
+                companyId: awardCompanyId,
+                action: award.action,
+                points: award.points,
+                type: 'credit',
+                awardKey: award.awardKey,
+                registrationId: registrationRef.id,
+                createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
         }
 
         if (installerRef && awardPoints > 0) {

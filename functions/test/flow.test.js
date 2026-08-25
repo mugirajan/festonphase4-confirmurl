@@ -407,7 +407,15 @@ test('a record with no serialDocId still registers the product', async () => {
 // had been seeded into it.
 
 /** Seed an installer, their company, and the point value for a completion. */
-function seedInstaller({ installs = 10, companyInstalls = 10, points = 50, active = true } = {}) {
+/**
+ * Seed the installer, their company, and how the install is priced.
+ *
+ * `rate` replaces the old `points`: there is no flat completion award any more,
+ * so an install earns its capacity multiplied by the family's per-kW rate.
+ * `seedPending()` stages a 5 kW on-grid, so a rate of 10 pays 50 — the same
+ * figure these tests were written around, reached the way the scheme now works.
+ */
+function seedInstaller({ installs = 10, companyInstalls = 10, rate = 10, active = true } = {}) {
     documents.set(key('installers', 'inst_55'), {
         name: 'Muthu Kumar',
         companyId: 'co_9',
@@ -419,8 +427,13 @@ function seedInstaller({ installs = 10, companyInstalls = 10, points = 50, activ
         name: 'Rppl Solar',
         lifetimeInstalls: companyInstalls,
     });
-    if (points !== null) {
-        documents.set(key('points_config', 'complete_registration'), { points, active: true });
+    documents.set(key('serial_num', SERIAL_DOC_ID), {
+        serialnumber: '2505063529',
+        registered: false,
+        kilowatt: '5',
+    });
+    if (rate !== null) {
+        documents.set(key('points_rates', 'other'), { pointsPerKw: rate, active: true });
     }
 }
 
@@ -454,8 +467,8 @@ test('confirming twice counts the install once', async () => {
 
 test('an install still counts when the points award is paused', async () => {
     seedPending();
-    seedInstaller({ installs: 10, companyInstalls: 10, points: null });
-    // No `points_config` document at all — nothing is payable.
+    // `rate: null` seeds no per-kW rate at all, so nothing is payable.
+    seedInstaller({ installs: 10, companyInstalls: 10, rate: null });
 
     await pressConfirm(TOKEN);
 
@@ -558,13 +571,19 @@ test('a serial missing from inventory still registers, with no capacity', async 
 // rate, or an unknown capacity all still earn the flat award. That is what makes
 // rolling this out family by family safe.
 
-/** Seed the installer, the flat value, and optionally a family rate. */
-function seedAward({ flat = 50, kilowatt = null, family = 'ongrid', rate = null, rateActive = true } = {}) {
+/**
+ * Seed the installer, their company, the serial, and optionally a family rate.
+ *
+ * There is NO flat award to seed. `complete_registration` left the scheme on
+ * 2026-08-25 — base points are capacity multiplied by the family's rate and
+ * nothing else. `lifetimeInstalls: 0` now matters beyond the counter: it makes
+ * each of these the engineer's FIRST install, which is an award of its own.
+ */
+function seedAward({ kilowatt = null, family = 'ongrid', rate = null, rateActive = true, otherRate = null } = {}) {
     documents.set(key('installers', 'inst_55'), {
         name: 'Muthu Kumar', companyId: 'co_9', lifetimeInstalls: 0, points: 0, active: true,
     });
     documents.set(key('companies', 'co_9'), { name: 'Rppl Solar', lifetimeInstalls: 0 });
-    documents.set(key('points_config', 'complete_registration'), { points: flat, active: true });
 
     const serial = { serialnumber: '2505063529', registered: false };
     if (kilowatt !== null) serial.kilowatt = kilowatt;
@@ -573,70 +592,87 @@ function seedAward({ flat = 50, kilowatt = null, family = 'ongrid', rate = null,
     if (rate !== null) {
         documents.set(key('points_rates', family), { pointsPerKw: rate, active: rateActive });
     }
+    // The catch-all any unpriced family falls back to.
+    if (otherRate !== null) {
+        documents.set(key('points_rates', 'other'), { pointsPerKw: otherRate, active: true });
+    }
 }
 
 const ledgerRows = () =>
     [...documents.entries()].filter(([k]) => k.startsWith('installer_points/')).map(([, v]) => v);
 
-test('with no family rate, the flat award is paid', async () => {
+/**
+ * Only the BASE ledger rows.
+ *
+ * The system awards — prompt registration, a new engineer's first install —
+ * write their own rows now, so indexing into every row is no longer
+ * unambiguous.
+ */
+const baseRows = () => ledgerRows().filter((r) => r.action === 'complete_registration');
+
+test('with no rate priced at all, nothing is awarded for the install', async () => {
+    // There is no flat award behind the rate any more: base points ARE the rate.
+    // An unpriced family therefore earns nothing, which is exactly why the
+    // `other` catch-all exists and is seeded live in production.
     seedPending({ productFamily: 'ongrid' });
-    seedAward({ flat: 50, kilowatt: '5' });
+    seedAward({ kilowatt: '5' });
 
     await pressConfirm(TOKEN);
 
-    assert.equal(documents.get(key('installers', 'inst_55')).points, 50);
-    assert.equal(ledgerRows()[0].awardBasis, 'flat');
+    assert.equal(baseRows().length, 0, 'no base ledger row');
 });
 
-test('a priced family pays per kW instead of the flat value', async () => {
+test('a priced family pays per kW', async () => {
     seedPending({ productFamily: 'ongrid' });
-    seedAward({ flat: 50, kilowatt: '5', family: 'ongrid', rate: 10 });
+    seedAward({ kilowatt: '5', family: 'ongrid', rate: 10 });
 
     await pressConfirm(TOKEN);
 
-    // 5 kW x 10 = 50 — same number here, but reached a different way.
-    const row = ledgerRows()[0];
-    assert.equal(row.points, 50);
+    const row = baseRows()[0];
+    assert.equal(row.points, 50, '5 kW x 10');
     assert.equal(row.awardBasis, 'per-kw', 'and the ledger records how');
     assert.equal(row.capacityKw, 5);
 });
 
 test('a large install earns proportionally more — the point of the feature', async () => {
     seedPending({ productFamily: 'micro-inverter' });
-    seedAward({ flat: 50, kilowatt: '50', family: 'micro-inverter', rate: 10 });
+    seedAward({ kilowatt: '50', family: 'micro-inverter', rate: 10 });
 
     await pressConfirm(TOKEN);
 
-    assert.equal(documents.get(key('installers', 'inst_55')).points, 500, '50 kW x 10, not the flat 50');
+    assert.equal(baseRows()[0].points, 500, '50 kW x 10');
 });
 
-test('an INACTIVE rate falls back to the flat award', async () => {
+test('an INACTIVE rate earns nothing — it is not replaced by the catch-all', async () => {
+    // Turning a family off is a decision to pay it nothing. Substituting the
+    // `other` rate would quietly undo that decision.
     seedPending({ productFamily: 'ongrid' });
-    seedAward({ flat: 50, kilowatt: '50', family: 'ongrid', rate: 10, rateActive: false });
+    seedAward({ kilowatt: '50', family: 'ongrid', rate: 10, rateActive: false, otherRate: 1 });
 
     await pressConfirm(TOKEN);
 
-    assert.equal(documents.get(key('installers', 'inst_55')).points, 50);
-    assert.equal(ledgerRows()[0].awardBasis, 'flat');
+    assert.equal(baseRows().length, 0);
 });
 
-test('a priced family with UNKNOWN capacity falls back rather than paying nothing', async () => {
+test('a priced family with UNKNOWN capacity earns no base points', async () => {
+    // The consequence of pricing purely by kW: with no kW there is nothing to
+    // compute. Worth a test of its own because it means a gap in the serial
+    // inventory costs an installer real points rather than paying a default.
     seedPending({ productFamily: 'ongrid' });
-    // No `kilowatt` on the serial at all.
-    seedAward({ flat: 50, kilowatt: null, family: 'ongrid', rate: 10 });
+    seedAward({ kilowatt: null, family: 'ongrid', rate: 10 });
 
     await pressConfirm(TOKEN);
 
-    assert.equal(documents.get(key('installers', 'inst_55')).points, 50, 'the installer is not penalised');
-    assert.equal(ledgerRows()[0].awardBasis, 'flat');
+    assert.equal(baseRows().length, 0);
 });
 
-test('an unpriced family is unaffected by another family being priced', async () => {
+test('an unpriced family is priced by the `other` catch-all', async () => {
+    // What makes "all other products" a rule rather than a label: only on-grid
+    // is priced individually, and this hybrid install still earns.
     seedPending({ productFamily: 'hybrid' });
-    // Only on-grid is priced; this install is hybrid.
-    seedAward({ flat: 50, kilowatt: '20', family: 'ongrid', rate: 10 });
+    seedAward({ kilowatt: '20', family: 'ongrid', rate: 10, otherRate: 1 });
 
     await pressConfirm(TOKEN);
 
-    assert.equal(documents.get(key('installers', 'inst_55')).points, 50, 'hybrid still earns the flat award');
+    assert.equal(baseRows()[0].points, 20, '20 kW x the catch-all 1');
 });
