@@ -221,15 +221,22 @@ async function completeRegistration(token, { userAgent, verifiedPhone, requirePh
                     if (companyDoc.exists) companyRef = cRef;
                 }
 
-                const cfgDoc = await tx.get(
-                    firestore.collection('points_config').doc('complete_registration'),
-                );
-                let flatPoints = 0;
-                if (cfgDoc.exists) {
-                    const c = cfgDoc.data() || {};
-                    const n = Number(c.points);
-                    if (c.active !== false && Number.isFinite(n) && n > 0) flatPoints = n;
-                }
+                // No flat completion award any more. `complete_registration` was
+                // removed from `points_config` on 2026-08-25 — it was built during
+                // the original Phase 4 work so there was something to pay, and it
+                // is not part of the specified scheme.
+                //
+                // Base points are per-kW and nothing else: capacity × the family's
+                // rate. Zero here is what makes that true, and it is passed
+                // explicitly rather than dropped so `resolveAward` keeps its shape
+                // and its twin in the portal stays comparable.
+                //
+                // ⚠ An install whose capacity cannot be read — a serial missing
+                // from `serial_num` — therefore earns NOTHING for base, where it
+                // used to earn the flat award. That follows from pricing by kW,
+                // but it means a gap in the serial inventory now costs an
+                // installer real points.
+                const flatPoints = 0;
 
                 // A per-kW rate for this product family, if Feston has priced it.
                 // Read here because every read must precede every write; the
@@ -337,6 +344,11 @@ async function completeRegistration(token, { userAgent, verifiedPhone, requirePh
             tx.set(firestore.collection('installer_points').doc(), {
                 installerId,
                     companyId: awardCompanyId,
+                // The ledger key stays `complete_registration`: it is what every
+                // row ever written carries, and the portal's history labels it.
+                // Renaming it would orphan the existing rows rather than tidy
+                // them. What changed is how the figure is reached, not what the
+                // award is for.
                 action: 'complete_registration',
                 points: awardPoints,
                 // How the figure was reached, so a ledger row can be explained
