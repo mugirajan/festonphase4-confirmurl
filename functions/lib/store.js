@@ -238,13 +238,28 @@ async function completeRegistration(token, { userAgent, verifiedPhone, requirePh
                 const family = String(pending.productFamily || pending.family || '').trim();
                 let ratePerKw = null;
                 let rateActive = false;
-                if (family) {
-                    const rateDoc = await tx.get(firestore.collection('points_rates').doc(family));
-                    if (rateDoc.exists) {
-                        const r = rateDoc.data() || {};
-                        ratePerKw = Number(r.pointsPerKw);
-                        rateActive = r.active !== false;
-                    }
+
+                // The family's own rate, falling back to the `other` catch-all —
+                // the twin of `rateForFamily` in
+                // feston-care/src/app/components/points-config/points-rates.types.ts.
+                //
+                // The fallback is what makes "all other products" a rule rather
+                // than a label: a family nobody has priced individually is priced
+                // here, instead of silently dropping to the flat award.
+                //
+                // An INACTIVE own-rate is not replaced by the catch-all. Turning
+                // a family off is a decision to pay it the flat award, and
+                // substituting another rate would undo that decision quietly.
+                let rateDoc = family
+                    ? await tx.get(firestore.collection('points_rates').doc(family))
+                    : null;
+                if (!rateDoc || !rateDoc.exists) {
+                    rateDoc = await tx.get(firestore.collection('points_rates').doc('other'));
+                }
+                if (rateDoc && rateDoc.exists) {
+                    const r = rateDoc.data() || {};
+                    ratePerKw = Number(r.pointsPerKw);
+                    rateActive = r.active !== false;
                 }
 
                 // Per-kW when priced and the capacity is known, flat otherwise.
