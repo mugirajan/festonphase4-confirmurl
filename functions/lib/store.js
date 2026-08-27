@@ -1,6 +1,7 @@
 'use strict';
 
 const admin = require('firebase-admin');
+const { issueSuperHero } = require('./super-hero');
 
 const { PENDING_COLLECTION, REGISTRATIONS_COLLECTION, SERIALS_COLLECTION } = require('./config');
 const { isExpired } = require('./expiry');
@@ -498,12 +499,34 @@ async function completeRegistration(token, { userAgent, verifiedPhone, requirePh
             });
         }
 
+        // Solar Super Hero — issued to the CUSTOMER, every time, whatever the
+        // system size. Inside the transaction on purpose: a certificate exists
+        // if and only if a registration does, so it can never be issued for an
+        // abandoned confirm, and a retry cannot mint a second one.
+        //
+        // It runs LAST so a failure here cannot cost the registration or the
+        // installer's points — but note that being in the transaction means a
+        // throw would roll all of it back. `issueSuperHero` is written not to
+        // throw: a missing email is skipped, not raised.
+        const superHero = await issueSuperHero(tx, firestore, {
+            id: registrationRef.id,
+            userId: pending.userId || '',
+            customerName: pending.customerName || '',
+            customerEmail: pending.customerEmail || '',
+            serialnumber: pending.serialnumber || '',
+            installationDate: pending.installationDate || '',
+            capacityKw,
+        });
+
         return {
             status: 'completed',
             alreadyCompleted: false,
             registeredProductId: registrationRef.id,
             serialFlipped: Boolean(serialRef),
             serialDocId,
+            // So the confirm page can congratulate the customer by number
+            // rather than making them wait for the email.
+            superHeroCertificate: superHero.sequenceNo,
         };
     });
 }
