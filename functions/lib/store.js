@@ -527,6 +527,9 @@ async function completeRegistration(token, { userAgent, verifiedPhone, requirePh
             // So the confirm page can congratulate the customer by number
             // rather than making them wait for the email.
             superHeroCertificate: superHero.sequenceNo,
+            // For the caller to send AFTER this transaction commits. Null when
+            // the customer gave no email address.
+            superHeroMailId: superHero.mailDocId || null,
         };
     });
 }

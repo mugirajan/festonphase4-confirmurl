@@ -98,9 +98,13 @@ async function issueSuperHero(tx, firestore, registration) {
     };
 
     tx.set(certRef, record);
-    queueSuperHeroEmail(tx, firestore, { ...record, id: certRef.id });
+    const mailDocId = queueSuperHeroEmail(tx, firestore, { ...record, id: certRef.id });
 
-    return { id: certRef.id, ...record };
+    // The mail id travels out so the caller can SEND it after the transaction
+    // commits. Sending inside would be wrong twice over: a transaction can
+    // retry, which would send the congratulation two or three times, and an
+    // SMTP timeout would roll back a registration that was otherwise fine.
+    return { id: certRef.id, mailDocId, ...record };
 }
 
 /**
@@ -117,7 +121,7 @@ async function issueSuperHero(tx, firestore, registration) {
  */
 function queueSuperHeroEmail(tx, firestore, cert) {
     const to = (cert.customerEmail || '').trim();
-    if (!to) return;
+    if (!to) return null;
 
     const name = (cert.customerName || '').trim() || 'there';
     const subject = `You are a ${AWARD_NAME}! Certificate ${cert.sequenceNo}`;
@@ -162,7 +166,8 @@ function queueSuperHeroEmail(tx, firestore, cert) {
   </div>
 </div>`.trim();
 
-    tx.set(firestore.collection(MAIL_QUEUE).doc(), {
+    const mailRef = firestore.collection(MAIL_QUEUE).doc();
+    tx.set(mailRef, {
         to,
         message: { subject, text, html },
         // Ours, not the extension's — so a queued mail can be traced back to the
@@ -171,6 +176,7 @@ function queueSuperHeroEmail(tx, firestore, cert) {
         sequenceNo: cert.sequenceNo,
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
+    return mailRef.id;
 }
 
 function escapeHtml(value) {

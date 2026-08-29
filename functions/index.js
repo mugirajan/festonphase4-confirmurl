@@ -37,6 +37,7 @@ const { isExpired } = require('./lib/expiry');
 const { buildDetailsFromRegistration, hasAnyDetail } = require('./lib/snapshot');
 const { renderPendingPage, renderConfirmedPage, renderUnavailablePage } = require('./lib/page');
 const store = require('./lib/store');
+const mailer = require('./lib/mailer');
 
 const asString = (value) => (typeof value === 'string' ? value.trim() : '');
 
@@ -230,9 +231,41 @@ async function handleConfirm(req, res, token) {
         });
     }
 
+    // The Solar Super Hero certificate email.
+    //
+    // AFTER the transaction, deliberately. A Firestore transaction can retry,
+    // and sending inside one would send the same congratulation two or three
+    // times to the same customer. Doing it here means the registration is
+    // already committed before a mail server is involved at all.
+    //
+    // Awaited, so the function does not return before the send resolves — a
+    // Cloud Function can be frozen the instant it responds, which would leave
+    // the mail half-sent. `sendQueued` never throws and never takes long enough
+    // to matter: a failure is written to the mail document and logged.
+    //
+    // Not sent for an `alreadyCompleted` replay — the customer reopening their
+    // link should not receive a second certificate.
+    if (result.superHeroMailId && !result.alreadyCompleted) {
+        const mail = await mailer.sendQueued(result.superHeroMailId);
+        // Only a genuine FAILURE is worth a warning. "No SMTP configured" is a
+        // deployment state, not a fault — `getTransport` says it once at
+        // startup, and repeating it per registration would bury the real
+        // failures in an environment that simply has no mail (every test run,
+        // and any deployment before the credentials are set).
+        if (!mail.sent && mail.reason === 'error') {
+            functions.logger.warn('super hero email failed to send', {
+                mailDocId: result.superHeroMailId,
+                error: mail.error,
+                registeredProductId: result.registeredProductId,
+            });
+        }
+    }
+
     return sendJson(res, 200, {
         status: 'completed',
         alreadyCompleted: !!result.alreadyCompleted,
         registeredProductId: result.registeredProductId || '',
+        // So the page can show the number without waiting for the email.
+        superHeroCertificate: result.superHeroCertificate || '',
     });
 }
