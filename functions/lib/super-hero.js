@@ -123,48 +123,51 @@ function queueSuperHeroEmail(tx, firestore, cert) {
     const to = (cert.customerEmail || '').trim();
     if (!to) return null;
 
-    const name = (cert.customerName || '').trim() || 'there';
+    /**
+     * Who the certificate names.
+     *
+     * "you" rather than a placeholder when the name is missing. The old text
+     * greeted with "Hi there," which reads fine as a greeting and badly on a
+     * certificate — "This is awarded to there," is nonsense. A registration
+     * genuinely can arrive without a name (an installer registering for someone
+     * who gave only a phone number), so this is a real case, not a defensive
+     * one.
+     */
+    const name = (cert.customerName || '').trim() || 'you';
     const subject = `You are a ${AWARD_NAME}! Certificate ${cert.sequenceNo}`;
 
+    // The plain-text part, which is what a text-only client shows and what most
+    // spam filters read first. Given the same care as the HTML: a message that
+    // reads like a stub in plain text looks like a phishing attempt.
+    //
+    // `filter(Boolean)` is NOT used here — blank lines are the only paragraph
+    // breaks plain text has, and stripping them would run it all together. Only
+    // the optional serial line is removed, by leaving it out rather than
+    // emptying it.
     const text = [
-        `Hi ${name},`,
+        'FESTON — CERTIFICATE OF RECOGNITION',
         '',
-        `Your solar installation is registered, and you are officially a ${AWARD_NAME}.`,
+        `                ${AWARD_NAME.toUpperCase()}`,
         '',
-        `Certificate number: ${cert.sequenceNo}`,
-        cert.serialnumber ? `Product serial: ${cert.serialnumber}` : '',
+        `This is awarded to ${name},`,
+        'for choosing solar and moving one step closer to clean energy.',
+        'Every rooftop counts — whatever its size.',
         '',
-        'Every rooftop counts. Whatever the size of your system, you have moved a',
-        'step closer to clean energy — and so has everyone downstream of it.',
+        '------------------------------------------------------------',
+        `  Certificate number : ${cert.sequenceNo}`,
+        ...(cert.serialnumber ? [`  Product serial     : ${cert.serialnumber}`] : []),
+        '------------------------------------------------------------',
         '',
         'Open the Feston app to view, download or share your certificate.',
         '',
-        'Thank you,',
+        'Thank you for going solar.',
         'Feston',
-    ]
-        .filter(line => line !== '')
-        .join('\n');
+        '',
+        'This certificate was issued automatically when your product',
+        'registration was confirmed.',
+    ].join('\n');
 
-    const html = `
-<div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;margin:0 auto;color:#1a1a1a">
-  <div style="background:#0063b0;color:#fff;padding:28px 24px;text-align:center">
-    <div style="font-size:13px;letter-spacing:2px;opacity:.85">FESTON</div>
-    <div style="font-size:26px;font-weight:bold;margin-top:8px">${AWARD_NAME}</div>
-  </div>
-  <div style="padding:24px">
-    <p>Hi ${escapeHtml(name)},</p>
-    <p>Your solar installation is registered, and you are officially a
-       <strong>${AWARD_NAME}</strong>.</p>
-    <p style="background:#e6f0f9;padding:14px 16px;border-radius:6px">
-      Certificate number: <strong>${escapeHtml(cert.sequenceNo)}</strong>
-      ${cert.serialnumber ? `<br />Product serial: ${escapeHtml(cert.serialnumber)}` : ''}
-    </p>
-    <p>Every rooftop counts. Whatever the size of your system, you have moved a
-       step closer to clean energy — and so has everyone downstream of it.</p>
-    <p>Open the Feston app to view, download or share your certificate.</p>
-    <p style="margin-top:28px">Thank you,<br />Feston</p>
-  </div>
-</div>`.trim();
+    const html = buildHtml({ name, cert });
 
     const mailRef = firestore.collection(MAIL_QUEUE).doc();
     tx.set(mailRef, {
@@ -177,6 +180,133 @@ function queueSuperHeroEmail(tx, firestore, cert) {
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
     return mailRef.id;
+}
+
+/**
+ * The certificate, as an email.
+ *
+ * ── Written for EMAIL CLIENTS, not browsers ─────────────────────────────────
+ * Nested tables and inline styles throughout, because Outlook renders with
+ * Word's engine: no flexbox, no grid, no external stylesheet, and `div`
+ * layouts collapse. Every rule that matters is on the element it affects.
+ *
+ * NO IMAGES. Most clients block remote images by default, so a logo would
+ * usually arrive as a broken box — and `CONFIRM_LOGO_URL` is unset anyway. The
+ * wordmark, the rule under it and the medal are all type and borders, so the
+ * certificate looks finished the moment it opens, with nothing to load.
+ *
+ * `border-radius` is ignored by Outlook, which squares the corners. That is a
+ * graceful loss: the layout, the colour and the hierarchy all survive.
+ *
+ * 600px is the long-standing safe width — wider and Outlook's preview pane
+ * starts scrolling horizontally.
+ */
+function buildHtml({ name, cert }) {
+    const BLUE = '#0063b0';
+    const INK = '#16202b';
+    const MUTED = '#5b6b7a';
+
+    const serialRow = cert.serialnumber
+        ? `
+              <tr>
+                <td style="padding:2px 0;color:${MUTED};font-size:13px">Product serial</td>
+                <td style="padding:2px 0;color:${INK};font-size:13px;font-weight:bold;text-align:right">
+                  ${escapeHtml(cert.serialnumber)}
+                </td>
+              </tr>`
+        : '';
+
+    return `
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+       style="background:#eef3f7;margin:0;padding:24px 12px;font-family:Arial,Helvetica,sans-serif">
+  <tr>
+    <td align="center">
+      <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0"
+             style="width:600px;max-width:100%;background:#ffffff;border-radius:10px;overflow:hidden;
+                    border:1px solid #dbe4ec">
+
+        <!-- brand band -->
+        <tr>
+          <td style="background:${BLUE};padding:26px 32px 22px 32px;text-align:center">
+            <div style="color:#ffffff;font-size:20px;font-weight:bold;letter-spacing:5px">FESTON</div>
+            <div style="color:#cfe4f6;font-size:10px;letter-spacing:3px;margin-top:4px">ALWAYS ON</div>
+          </td>
+        </tr>
+
+        <!-- the award -->
+        <tr>
+          <td style="padding:34px 32px 8px 32px;text-align:center">
+            <div style="font-size:34px;line-height:34px">&#9728;&#65039;</div>
+            <div style="color:${MUTED};font-size:11px;letter-spacing:3px;margin-top:14px">
+              CERTIFICATE OF RECOGNITION
+            </div>
+            <div style="color:${INK};font-size:30px;font-weight:bold;margin-top:8px;line-height:36px">
+              ${AWARD_NAME}
+            </div>
+            <div style="width:56px;height:3px;background:${BLUE};margin:16px auto 0 auto"></div>
+          </td>
+        </tr>
+
+        <!-- recipient -->
+        <tr>
+          <td style="padding:22px 32px 0 32px;text-align:center">
+            <div style="color:${MUTED};font-size:13px">This is awarded to</div>
+            <div style="color:${BLUE};font-size:23px;font-weight:bold;margin-top:6px">
+              ${escapeHtml(name)}
+            </div>
+          </td>
+        </tr>
+
+        <!-- the reason -->
+        <tr>
+          <td style="padding:20px 40px 0 40px;text-align:center">
+            <div style="color:${INK};font-size:15px;line-height:24px">
+              for choosing solar and moving one step closer to clean energy.
+              Every rooftop counts &mdash; whatever its size.
+            </div>
+          </td>
+        </tr>
+
+        <!-- details -->
+        <tr>
+          <td style="padding:26px 32px 0 32px">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+                   style="background:#f4f8fb;border:1px solid #e2ebf3;border-radius:8px;padding:16px 18px">
+              <tr>
+                <td style="padding:2px 0;color:${MUTED};font-size:13px">Certificate number</td>
+                <td style="padding:2px 0;color:${BLUE};font-size:14px;font-weight:bold;text-align:right;
+                           font-family:'Courier New',Courier,monospace">
+                  ${escapeHtml(cert.sequenceNo)}
+                </td>
+              </tr>${serialRow}
+            </table>
+          </td>
+        </tr>
+
+        <!-- what next -->
+        <tr>
+          <td style="padding:26px 32px 8px 32px;text-align:center">
+            <div style="color:${MUTED};font-size:14px;line-height:22px">
+              Open the Feston app to view, download or share your certificate.
+            </div>
+          </td>
+        </tr>
+
+        <!-- footer -->
+        <tr>
+          <td style="padding:24px 32px 28px 32px;text-align:center;border-top:1px solid #edf2f6">
+            <div style="color:${MUTED};font-size:12px">Thank you for going solar.</div>
+            <div style="color:${INK};font-size:13px;font-weight:bold;margin-top:4px">Feston</div>
+          </td>
+        </tr>
+      </table>
+
+      <div style="color:#8c9aa8;font-size:11px;margin-top:14px">
+        This certificate was issued automatically when your product registration was confirmed.
+      </div>
+    </td>
+  </tr>
+</table>`.trim();
 }
 
 function escapeHtml(value) {

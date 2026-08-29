@@ -123,10 +123,40 @@ test('no email address means no queued mail, and still a certificate', async () 
     }
 });
 
-test('a nameless customer is greeted, not left with a blank', async () => {
+test('a nameless customer still reads as a certificate, not a blank', async () => {
+    // A registration can genuinely arrive without a name — an installer
+    // registering for someone who gave only a phone number. "This is awarded to
+    // ," is not shippable, and neither is the old greeting-style fallback:
+    // "This is awarded to there," is nonsense on a certificate.
+    for (const customerName of ['', '   ']) {
+        const { firestore, tx, writes } = fakeStore(0);
+        await issueSuperHero(tx, firestore, registration({ customerName }));
+
+        const msg = writes[MAIL_QUEUE][0].message;
+        assert.match(msg.text, /This is awarded to you,/);
+        assert.ok(!/awarded to\s*,/.test(msg.text), 'left a dangling comma where the name should be');
+        assert.ok(!/there,/.test(msg.text), 'used the old greeting fallback on a certificate');
+        assert.match(msg.html, />\s*you\s*</);
+    }
+});
+
+test('the HTML is built for email clients, not browsers', () => {
+    // Outlook renders with Word's engine: no flexbox, no grid, no external
+    // stylesheet, and div layouts collapse. These assertions pin the choices
+    // that keep the certificate intact there.
     const { firestore, tx, writes } = fakeStore(0);
-    await issueSuperHero(tx, firestore, registration({ customerName: '' }));
-    assert.match(writes[MAIL_QUEUE][0].message.text, /Hi there,/);
+    return issueSuperHero(tx, firestore, registration()).then(() => {
+        const html = writes[MAIL_QUEUE][0].message.html;
+
+        assert.match(html, /<table/, 'no table layout — Outlook will collapse it');
+        assert.ok(!/display:\s*flex/i.test(html), 'flexbox does not render in Outlook');
+        assert.ok(!/display:\s*grid/i.test(html), 'grid does not render in Outlook');
+        assert.ok(!/<link|<style/i.test(html), 'external or block CSS is stripped by many clients');
+        // Remote images are blocked by default in most clients, so a logo would
+        // usually arrive as a broken box. The wordmark is type.
+        assert.ok(!/<img/i.test(html), 'no images — they arrive blocked');
+        assert.match(html, /FESTON/, 'lost the wordmark');
+    });
 });
 
 test('the email escapes a name that would otherwise inject markup', async () => {
