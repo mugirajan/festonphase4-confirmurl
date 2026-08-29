@@ -206,11 +206,18 @@ function buildHtml({ name, cert }) {
     const INK = '#16202b';
     const MUTED = '#5b6b7a';
 
+    // `white-space:nowrap` on every cell in this block.
+    //
+    // "Certificate number" is a longer label than "Product serial", and its
+    // value is monospace, which is wider again — so the table gave the label
+    // less room than it needed and broke it across two lines while the serial
+    // row sat happily on one. A label that wraps mid-phrase reads as a layout
+    // fault on a document meant to look like a certificate.
     const serialRow = cert.serialnumber
         ? `
               <tr>
-                <td style="padding:2px 0;color:${MUTED};font-size:13px">Product serial</td>
-                <td style="padding:2px 0;color:${INK};font-size:13px;font-weight:bold;text-align:right">
+                <td style="padding:3px 0;color:${MUTED};font-size:13px;white-space:nowrap">Product serial</td>
+                <td style="padding:3px 0;color:${INK};font-size:13px;font-weight:bold;text-align:right;white-space:nowrap">
                   ${escapeHtml(cert.serialnumber)}
                 </td>
               </tr>`
@@ -273,9 +280,8 @@ function buildHtml({ name, cert }) {
             <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
                    style="background:#f4f8fb;border:1px solid #e2ebf3;border-radius:8px;padding:16px 18px">
               <tr>
-                <td style="padding:2px 0;color:${MUTED};font-size:13px">Certificate number</td>
-                <td style="padding:2px 0;color:${BLUE};font-size:14px;font-weight:bold;text-align:right;
-                           font-family:'Courier New',Courier,monospace">
+                <td style="padding:3px 0;color:${MUTED};font-size:13px;white-space:nowrap">Certificate number</td>
+                <td style="padding:3px 0;color:${BLUE};font-size:14px;font-weight:bold;text-align:right;white-space:nowrap;font-family:'Courier New',Courier,monospace">
                   ${escapeHtml(cert.sequenceNo)}
                 </td>
               </tr>${serialRow}
