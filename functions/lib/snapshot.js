@@ -15,6 +15,7 @@ const {
     familyLongName,
     phaseDisplay,
     capacityDisplay,
+    energyDisplay,
     toDateString,
     dateDisplay,
 } = require('./format');
@@ -224,21 +225,45 @@ function hasAnyDetail(details) {
 }
 
 /** Battery lines for the snapshot, or [] when the registration recorded none. */
-function batteryLines(batteryDetails) {
+/**
+ * Parses the recorded batteries into structured entries.
+ *
+ * This is the single place battery shapes are understood. `batteryLines` is
+ * derived from it rather than parsing separately, so the one-line form and the
+ * detailed form can never disagree about what was installed.
+ *
+ * Each entry carries `line` — the legacy one-liner, byte-identical to what this
+ * module produced before — alongside the individual fields the confirmation page
+ * needs to give a battery the same treatment as the inverter.
+ */
+function batteryEntries(batteryDetails) {
     if (!batteryDetails || typeof batteryDetails !== 'object') return [];
-    if (batteryDetails.purchased === false) return ['No batteries purchased'];
+    if (batteryDetails.purchased === false) {
+        return [{ note: 'No batteries purchased', line: 'No batteries purchased' }];
+    }
 
     if (batteryDetails.brand === 'feston') {
         const list = Array.isArray(batteryDetails.festonBatteries) ? batteryDetails.festonBatteries : [];
         return list
             .map((b) => {
-                // The wizard stores { sn, model }; the mobile app stores the
-                // serial on its own as a plain string.
-                if (typeof b === 'string') return asString(b);
-                const sn = asString(b && b.sn) || asString(b && b.serial);
-                const model = asString(b && b.model);
-                if (!sn && !model) return '';
-                return sn && model ? `${sn} · ${model}` : sn || model;
+                // The wizard stores { sn, model, capacityKw, subtype }; the mobile
+                // app stores the serial on its own as a plain string.
+                const raw = typeof b === 'string' ? { sn: b } : b || {};
+                const serial = asString(raw.sn) || asString(raw.serial);
+                const model = asString(raw.model);
+                const subtype = asString(raw.subtype);
+                if (!serial && !model) return null;
+                return {
+                    // A Feston battery has no brand field of its own — it is the
+                    // brand. The subtype ("Rack", "Wall") is what distinguishes
+                    // one from another, so it belongs in the name when present.
+                    name: subtype ? `Feston Battery · ${subtype}` : 'Feston Battery',
+                    serial,
+                    model,
+                    capacity: asString(raw.capacityKw),
+                    subtype,
+                    line: serial && model ? `${serial} · ${model}` : serial || model,
+                };
             })
             .filter(Boolean);
     }
@@ -247,16 +272,34 @@ function batteryLines(batteryDetails) {
         const list = Array.isArray(batteryDetails.otherBatteries) ? batteryDetails.otherBatteries : [];
         return list
             .map((b) => {
-                if (typeof b === 'string') return asString(b);
-                const name = [asString(b && b.brand), asString(b && b.model)].filter(Boolean).join(' ');
-                const serial = asString(b && b.serial);
-                if (name && serial) return `${name} · ${serial}`;
-                return name || serial;
+                const raw = typeof b === 'string' ? { serial: b } : b || {};
+                const brand = asString(raw.brand);
+                const model = asString(raw.model);
+                const serial = asString(raw.serial);
+                // A third-party battery is identified by brand + model; that pair
+                // is its name, the way "Feston Battery" is a Feston one's.
+                const name = [brand, model].filter(Boolean).join(' ');
+                if (!name && !serial) return null;
+                return {
+                    name: brand || name,
+                    serial,
+                    model,
+                    capacity: '',
+                    subtype: '',
+                    line: name && serial ? `${name} · ${serial}` : name || serial,
+                };
             })
             .filter(Boolean);
     }
 
     return [];
+}
+
+/** The one-line form, kept for callers that want a compact summary. */
+function batteryLines(batteryDetails) {
+    return batteryEntries(batteryDetails)
+        .map((entry) => entry.line)
+        .filter(Boolean);
 }
 
 /**
@@ -272,9 +315,11 @@ function toDisplaySections(details) {
     const product = safe.product || {};
     const installation = safe.installation || {};
 
+    // A row survives if it has a value, or if it is a sub-heading (which carries
+    // no value of its own — it labels the rows beneath it).
     const section = (title, rows) => ({
         title,
-        rows: rows.filter((row) => asString(row.value).length > 0),
+        rows: rows.filter((row) => row.heading || asString(row.value).length > 0),
     });
 
     const sections = [
@@ -304,17 +349,32 @@ function toDisplaySections(details) {
         ]),
     ];
 
-    const batteries = batteryLines(safe.batteryDetails);
+    // Batteries get the same treatment as the inverter: name, serial, model and
+    // capacity as separate labelled fields, not a single compressed line. A
+    // battery is a registered product with its own warranty, and a customer
+    // checking "is this right?" needs the same detail for it as for the inverter
+    // — including the capacity, which the wizard captures and used to discard.
+    //
+    // With more than one battery each gets a sub-heading, so N batteries read as
+    // N products rather than one run-on list.
+    const batteries = batteryEntries(safe.batteryDetails);
     if (batteries.length) {
-        sections.push(
-            section(
-                'Batteries',
-                batteries.map((line, index) => ({
-                    label: batteries.length > 1 ? `Battery ${index + 1}` : 'Battery',
-                    value: line,
-                })),
-            ),
-        );
+        const rows = [];
+        const many = batteries.length > 1;
+
+        batteries.forEach((battery, index) => {
+            if (battery.note) {
+                rows.push({ label: 'Batteries', value: battery.note, wide: true });
+                return;
+            }
+            if (many) rows.push({ heading: `Battery ${index + 1}` });
+            rows.push({ label: 'Product', value: battery.name });
+            rows.push({ label: 'Serial Number', value: battery.serial, mono: true });
+            rows.push({ label: 'Model', value: battery.model });
+            rows.push({ label: 'Capacity', value: energyDisplay(battery.capacity) });
+        });
+
+        sections.push(section('Batteries', rows));
     }
 
     return sections.filter((s) => s.rows.length > 0);
@@ -326,5 +386,6 @@ module.exports = {
     mergeDetails,
     hasAnyDetail,
     batteryLines,
+    batteryEntries,
     toDisplaySections,
 };

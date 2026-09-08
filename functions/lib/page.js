@@ -29,44 +29,93 @@ const COMPANY_SITE = 'https://www.festonsev.com';
 /** Firebase JS SDK version loaded from gstatic on the OTP path. */
 const FIREBASE_SDK_VERSION = '10.13.2';
 
+const { FESTON_WORDMARK_DATA_URI } = require('./brand');
+const { FONT_FACE_CSS } = require('./fonts');
+
 function styles() {
     return `
+    ${FONT_FACE_CSS}
     *, *::before, *::after { box-sizing: border-box; }
+    /* Type and colour mirror the mobile app's tokens so the link the customer
+       opens looks like the app that handed it over: Exo 2 for headings, Inter
+       for body (feston/src/theme/typography.ts), brand blue #055CA7 and the
+       cool #F4F7FB canvas that white cards lift off (theme/colors.ts).
+       Both faces are embedded above (lib/fonts.js) rather than fetched, so the
+       page keeps its typography with no network beyond the one that delivered
+       it. The system stack stays in each stack for anything the Latin subset
+       does not cover — a Tamil name renders in the platform font, as it would
+       have anyway. */
+    :root {
+      --font-head: "Exo 2", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      --font-body: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      --canvas: #F4F7FB;
+      --ink: #101828;
+      --ink-muted: #5B6B7F;
+      --hairline: #E4EAF2;
+    }
     body {
       margin: 0;
-      background: #f7f8fa;
-      color: #111827;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: var(--canvas);
+      color: var(--ink);
+      font-family: var(--font-body);
       -webkit-font-smoothing: antialiased;
     }
     .goldband { height: 4px; background: ${BRAND_GOLD}; }
     main { max-width: 640px; margin: 0 auto; padding: 28px 16px 40px; }
-    .brand { text-align: center; margin-bottom: 22px; }
-    .wordmark {
-      font-size: 26px; font-weight: 800; letter-spacing: 3px;
-      color: ${BRAND_BLUE}; margin: 0;
+    .brand { text-align: center; margin-bottom: 20px; }
+    img.wordmark { height: 44px; width: auto; display: inline-block; }
+    h1 {
+      font-family: var(--font-head); font-size: 24px; font-weight: 600;
+      line-height: 32px; text-align: center; margin: 0; letter-spacing: -.2px;
     }
-    .wordmark img { height: 46px; width: auto; }
-    .tagline { margin: 6px 0 0; font-size: 12px; letter-spacing: 1.5px; text-transform: uppercase; color: #6b7280; }
-    h1 { font-size: 22px; font-weight: 600; text-align: center; margin: 0; }
     .rule { width: 60px; height: 2px; background: ${BRAND_GOLD}; margin: 10px auto 0; }
-    .lede { text-align: center; color: #4b5563; font-size: 14px; line-height: 1.55; margin: 14px auto 0; max-width: 30rem; }
+    .lede {
+      text-align: center; color: var(--ink-muted);
+      font-size: 15px; line-height: 24px; margin: 12px auto 0; max-width: 30rem;
+    }
     .card {
-      background: #fff; border-radius: 12px; padding: 20px;
-      box-shadow: 0 1px 2px rgba(16,24,40,.06); border: 1px solid #e5e7eb;
-      margin-top: 22px;
+      background: #fff; border-radius: 14px; padding: 22px 20px;
+      box-shadow: 0 1px 2px rgba(16,24,40,.06); border: 1px solid var(--hairline);
+      margin-top: 20px;
     }
-    .section + .section { margin-top: 18px; }
+    .section + .section { margin-top: 26px; }
+    /* Section headings were 13px semibold on a hairline — the same weight as the
+       values beneath them, so the page read as one undifferentiated list. Exo 2
+       at 16 with a short brand rule gives the eye somewhere to land. */
     .section-title {
-      font-size: 13px; font-weight: 600; color: #111827;
-      padding-bottom: 8px; border-bottom: 1px solid #e5e7eb; margin: 0 0 12px;
+      font-family: var(--font-head);
+      font-size: 16px; font-weight: 600; color: var(--ink);
+      margin: 0 0 14px; padding-bottom: 10px;
+      border-bottom: 1px solid var(--hairline); position: relative;
     }
-    dl { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 0; }
+    .section-title::after {
+      content: ""; position: absolute; left: 0; bottom: -1px;
+      width: 28px; height: 2px; background: ${BRAND_BLUE};
+    }
+    dl { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 16px; margin: 0; }
     dl > div.wide { grid-column: 1 / -1; }
-    dt { font-size: 10.5px; letter-spacing: .6px; text-transform: uppercase; color: #6b7280; margin-bottom: 2px; }
-    dd { margin: 0; font-size: 14.5px; color: #111827; word-break: break-word; }
-    dd.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: .5px; }
+    dt {
+      font-size: 11px; letter-spacing: .5px; text-transform: uppercase;
+      color: var(--ink-muted); margin-bottom: 3px; font-weight: 500;
+    }
+    dd { margin: 0; font-size: 15px; line-height: 22px; color: var(--ink); word-break: break-word; }
+    /* The facts a customer actually checks — serial, model, warranty date — are
+       the reason the page exists, so they carry weight the postal code does not. */
+    dd.mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      letter-spacing: .5px; font-weight: 600; color: ${BRAND_BLUE};
+    }
     @media (max-width: 460px) { dl { grid-template-columns: 1fr; } }
+
+    /* A sub-heading inside a section — "Battery 2" when more than one was
+       installed. Subordinate to .section-title (a step smaller, no rule), but
+       still Exo 2: each battery under it is a registered product in its own
+       right, not a footnote to the one above. */
+    .subhead {
+      font-family: var(--font-head); font-size: 14px; font-weight: 600;
+      color: var(--ink); margin: 0 0 10px;
+    }
+    dl + .subhead { margin-top: 18px; }
 
     .notice {
       margin-top: 18px; border-radius: 10px; padding: 12px 14px;
@@ -76,9 +125,14 @@ function styles() {
     .notice-red { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; }
 
     .actions { margin-top: 22px; }
+    /* 500, not 600: the app has no Inter SemiBold — its own primary buttons are
+       labelLarge, which is Inter Medium (feston/src/theme/typography.ts). Asking
+       for a weight the family does not ship would have the browser synthesise
+       one, which is heavier and blurrier than the button in the app this link
+       came from. */
     button.primary {
       width: 100%; border: 0; border-radius: 10px; cursor: pointer;
-      background: ${BRAND_BLUE}; color: #fff; font-size: 15px; font-weight: 600;
+      background: ${BRAND_BLUE}; color: #fff; font-size: 15px; font-weight: 500;
       padding: 15px 16px; font-family: inherit;
     }
     button.primary:hover:not(:disabled) { background: ${BRAND_BLUE_DARK}; }
@@ -93,13 +147,18 @@ function styles() {
     .status-ok { background: rgba(13,84,169,.10); color: ${BRAND_BLUE}; }
     .status-warn { background: #fef3c7; color: #b45309; }
     .centred { text-align: center; }
-    .centred h2 { font-size: 18px; margin: 0 0 6px; }
-    .centred p { margin: 0 auto; color: #4b5563; font-size: 14px; line-height: 1.6; max-width: 26rem; }
+    .centred h2 {
+      font-family: var(--font-head); font-size: 20px; font-weight: 600;
+      line-height: 28px; margin: 0 0 8px;
+    }
+    .centred p { margin: 0 auto; color: var(--ink-muted); font-size: 15px; line-height: 24px; max-width: 26rem; }
 
     footer { border-top: 1px solid #e5e7eb; background: #fff; padding: 20px 16px 26px; margin-top: 30px; }
     footer .inner { max-width: 640px; margin: 0 auto; text-align: center; }
-    footer .co { font-size: 13.5px; font-weight: 600; color: ${BRAND_BLUE}; margin: 0; }
-    footer .addr, footer .terms { font-size: 11.5px; color: #6b7280; line-height: 1.6; margin: 6px 0 0; }
+    footer .co { font-family: var(--font-head); font-size: 15px; font-weight: 600; color: ${BRAND_BLUE}; margin: 0; }
+    /* Was 11.5px #6b7280 — below the size and contrast where a postal address is
+       comfortably readable, on the one block a customer may need to act on. */
+    footer .addr, footer .terms { font-size: 12.5px; color: var(--ink-muted); line-height: 1.7; margin: 8px 0 0; }
     footer a { color: ${BRAND_BLUE}; font-weight: 500; }
 
     .acks { display: grid; gap: 12px; margin: 4px 0 18px; }
@@ -117,15 +176,62 @@ function styles() {
   `;
 }
 
+/**
+ * The masthead. Renders the real Feston wordmark — the same embedded asset the
+ * mobile app draws (lib/brand.js), so the page the customer is handed carries
+ * the same mark as the app that handed it over.
+ *
+ * `CONFIRM_LOGO_URL` still wins if it is set, so marketing can point at a hosted
+ * asset without a code change. The embedded mark is the default rather than the
+ * fallback, because the previous default — the letters "FESTON" set in the
+ * system font — read as an unfinished page rather than as a brand.
+ *
+ * The tagline is part of the wordmark artwork, so it is not repeated as text.
+ */
 function renderBrand(logoUrl) {
-    const mark = logoUrl
-        ? `<img src="${escapeHtml(logoUrl)}" alt="Feston" />`
-        : 'FESTON';
+    const src = logoUrl || FESTON_WORDMARK_DATA_URI;
     return `
     <div class="brand">
-      <p class="wordmark">${mark}</p>
-      <p class="tagline">Always On</p>
+      <img class="wordmark" src="${escapeHtml(src)}" alt="Feston — always on" />
     </div>`;
+}
+
+/**
+ * Splits a section's rows into blocks: an optional sub-heading followed by the
+ * label/value pairs that belong under it.
+ *
+ * A `{heading}` row — "Battery 1", "Battery 2" — carries no value of its own; it
+ * names the rows after it. It gets a block rather than a cell in the shared grid
+ * for two reasons. `<dl>` admits only `<dt>`/`<dd>` groups, so a bare heading has
+ * nowhere valid to sit inside one; and a `<dl>` per block lays each battery out
+ * on a grid of its own, so a battery missing a field cannot push the next one's
+ * values into the opposite column.
+ */
+function toBlocks(rows) {
+    const blocks = [];
+
+    for (const row of rows) {
+        if (row.heading || !blocks.length) blocks.push({ heading: row.heading || '', rows: [] });
+        if (!row.heading) blocks[blocks.length - 1].rows.push(row);
+    }
+
+    // A heading with nothing under it would announce a battery whose every
+    // field was empty and therefore dropped.
+    return blocks.filter((block) => block.rows.length);
+}
+
+function renderBlock(block) {
+    const heading = block.heading ? `<h3 class="subhead">${escapeHtml(block.heading)}</h3>\n        ` : '';
+    return `${heading}<dl>
+          ${block.rows
+              .map(
+                  (row) => `<div${row.wide ? ' class="wide"' : ''}>
+            <dt>${escapeHtml(row.label)}</dt>
+            <dd${row.mono ? ' class="mono"' : ''}>${escapeHtml(row.value)}</dd>
+          </div>`,
+              )
+              .join('\n          ')}
+        </dl>`;
 }
 
 function renderSections(details) {
@@ -134,16 +240,7 @@ function renderSections(details) {
             (section) => `
       <div class="section">
         <h2 class="section-title">${escapeHtml(section.title)}</h2>
-        <dl>
-          ${section.rows
-              .map(
-                  (row) => `<div${row.wide ? ' class="wide"' : ''}>
-            <dt>${escapeHtml(row.label)}</dt>
-            <dd${row.mono ? ' class="mono"' : ''}>${escapeHtml(row.value)}</dd>
-          </div>`,
-              )
-              .join('\n          ')}
-        </dl>
+        ${toBlocks(section.rows).map(renderBlock).join('\n        ')}
       </div>`,
         )
         .join('\n');
@@ -207,8 +304,8 @@ function renderPendingPage({ details, expiresAt, actionUrl, token, logoUrl, otpE
     const body = `
 <h1>Confirm your registration</h1>
 <div class="rule"></div>
-<p class="lede">Please check the details below. If everything is correct, accept the two
-acknowledgements and continue — your product is registered only after you confirm.</p>
+<p class="lede">Your installer has filled these in for you. Check they are right, tick both
+boxes, and confirm — your warranty starts the moment you do.</p>
 
 <div class="notice notice-amber" id="expiry-notice">
   This link expires in <strong id="countdown">${escapeHtml(humaniseSeconds(remaining))}</strong>.
@@ -250,9 +347,9 @@ ${renderSections(details)}
 <div id="done-area" hidden>
   <div class="card centred">
     <div class="status-icon status-ok">&#10003;</div>
-    <h2>Registration complete</h2>
-    <p>Thank you. Your product is now registered and your warranty is being activated.
-    It will appear under <strong>My Products</strong> in the Feston app.</p>
+    <h2>You're registered</h2>
+    <p>Your Feston warranty is active from today. You'll find it, and your
+    warranty certificate, under <strong>My Products</strong> in the Feston app.</p>
   </div>
 </div>
 
@@ -425,9 +522,9 @@ function renderConfirmedPage({ details, logoUrl }) {
     const body = `
 <div class="card centred">
   <div class="status-icon status-ok">&#10003;</div>
-  <h2>Registration complete</h2>
-  <p>This product is already registered — nothing more is needed. It appears under
-  <strong>My Products</strong> in the Feston app.</p>
+  <h2>Already registered</h2>
+  <p>This product is registered and its warranty is active — there's nothing more
+  to do. You'll find it under <strong>My Products</strong> in the Feston app.</p>
 </div>
 
 <div class="card">

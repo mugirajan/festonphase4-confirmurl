@@ -70,6 +70,20 @@ function capacityDisplay(capacity) {
 }
 
 /**
+ * A battery's capacity, which is ENERGY (kWh) — not the inverter's power (kW).
+ *
+ * Both arrive as the same bare number on the same document, so it would be easy
+ * to render both with `capacityDisplay`. That would print a battery as "5 Kw",
+ * which is wrong in a way a customer cannot catch: the number is right and the
+ * unit is not, on a page whose whole job is checking the facts.
+ */
+function energyDisplay(capacity) {
+    const c = asString(capacity);
+    if (!c) return '';
+    return `${c.replace(/\.0+$/, '')} kWh`;
+}
+
+/**
  * Anything date-shaped → "YYYY-MM-DD".
  *
  * The two writers disagree: the portal wizard stores `warrantyEndDate` as a
@@ -128,6 +142,7 @@ module.exports = {
     familyLongName,
     phaseDisplay,
     capacityDisplay,
+    energyDisplay,
     toDateString,
     dateDisplay,
     humaniseSeconds,
