@@ -4,12 +4,13 @@
  * Sending the queued mail.
  *
  * ── Why a queue AND a sender ────────────────────────────────────────────────
- * `super-hero.js` writes each email into the `mail` collection inside the
- * confirm transaction. This drains that queue. Keeping the two apart is not
- * ceremony:
+ * `hero-flow.js` writes each email into the `mail` collection once a
+ * certificate has been rendered. This drains that queue. Keeping the two apart
+ * is not ceremony:
  *
- *   - A Firestore transaction can RETRY. Sending inside one would send the same
- *     congratulation two or three times to the same customer.
+ *   - The issuing path can RETRY — it did run inside the confirm transaction,
+ *     and the trigger that replaced it is retried by the platform. Sending
+ *     from there would send the same congratulation two or three times.
  *   - The queue document is the audit trail. When a customer says they never
  *     got it, `delivery.state` says whether we tried and what happened.
  *   - If SMTP is down, the registration still completes. A mail server is not
@@ -82,7 +83,7 @@ function getTransport() {
  * page — their product IS registered. The failure goes to the document and the
  * log, where it can be found later.
  *
- * @param mailDocId  id in the `mail` collection, from `issueSuperHero`
+ * @param mailDocId  id in the `mail` collection
  */
 async function sendQueued(mailDocId) {
     if (!mailDocId) return { sent: false, reason: 'no-doc' };
@@ -111,12 +112,23 @@ async function sendQueued(mailDocId) {
         }
 
         const message = doc.message || {};
+        // Attachments are passed straight through to nodemailer, which accepts
+        // `{ filename, path }` where `path` may be a URL and is fetched at send
+        // time. That is how the Solar Super Hero certificate travels: a signed
+        // Storage URL rather than inline bytes, because a Firestore document is
+        // capped at 1 MiB and the certificate PNG alone is around 830 KB.
+        //
+        // Same field name and shape the Firebase Trigger Email extension uses,
+        // so a queue document is sendable by either.
         await tx.sendMail({
             from: smtpConfig().from,
             to: doc.to,
             subject: message.subject,
             text: message.text,
             html: message.html,
+            ...(Array.isArray(message.attachments) && message.attachments.length
+                ? { attachments: message.attachments }
+                : {}),
         });
 
         await ref.set(

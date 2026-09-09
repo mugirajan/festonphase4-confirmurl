@@ -22,6 +22,7 @@ const admin = require('firebase-admin');
 const { HERO_COLLECTION, HERO_EMAIL_ENABLED, MAIL_COLLECTION } = require('./config');
 const { loadRegistrations, plan, render, signedUrl, millisOf } = require('./hero-issue');
 const { buildMailDocument } = require('./hero-mail');
+const mailer = require('./mailer');
 
 /**
  * Issues (or re-issues) the certificate for one customer.
@@ -116,7 +117,7 @@ async function queueEmail(firestore, certificate, files, action, logger) {
             signedUrl(files.pngPath),
             signedUrl(files.pdfPath),
         ]);
-        await firestore.collection(MAIL_COLLECTION).add({
+        const mailRef = await firestore.collection(MAIL_COLLECTION).add({
             ...buildMailDocument({
                 to,
                 customerName: certificate.customerName,
@@ -134,6 +135,20 @@ async function queueEmail(firestore, certificate, files, action, logger) {
             heroVersion: certificate.version,
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
         });
+
+        // Queue first, then drain. The document is the audit trail — when a
+        // customer says they never got their certificate, `delivery.state` says
+        // whether we tried and what happened — and it survives even if the send
+        // never runs. `sendQueued` never throws, and with no SMTP configured it
+        // simply leaves the document PENDING for whenever credentials exist.
+        const sent = await mailer.sendQueued(mailRef.id);
+        if (!sent.sent && sent.reason === 'error') {
+            logger.warn('hero certificate: the email failed to send', {
+                uid: certificate.uid,
+                mailDocId: mailRef.id,
+                error: sent.error,
+            });
+        }
         return true;
     } catch (error) {
         logger.error('hero certificate: could not queue the email', {

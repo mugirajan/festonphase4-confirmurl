@@ -3,12 +3,16 @@
 /**
  * The certificate email.
  *
- * Delivery is not done here. A document is written to the collection the
- * Firebase "Trigger Email" extension watches, and the extension sends it. That
- * keeps SMTP credentials, retries, bounce handling and delivery state out of
- * this codebase entirely — and it means a mail that fails to send leaves a
- * document with an `delivery.state` of `ERROR` to look at, rather than a line
- * in a log that has since rotated away.
+ * Delivery is not done here. A document is written to the `mail` collection and
+ * something else drains it — `lib/mailer.js` over SMTP today, and the Firebase
+ * "Trigger Email" extension if it is ever installed. The shape below satisfies
+ * both: they read the same fields and write the same `delivery.state`, so
+ * either can send a queued document and neither will re-send one the other
+ * already delivered.
+ *
+ * The queue is also the audit trail. A mail that fails leaves a document with
+ * `delivery.state: 'ERROR'` on it, rather than a line in a log that has since
+ * rotated away.
  *
  * The certificate travels as an ATTACHMENT, not as an inline image. Mail
  * clients block remote images by default, so an inline certificate would show
@@ -130,9 +134,10 @@ function htmlFor({ customerName, certificateNumber, co2Tonnes, trees, isReissue 
 /**
  * Builds the document for the mail collection.
  *
- * `path` on an attachment is a URL the extension fetches at send time, which is
- * why the caller passes signed URLs rather than the file bytes: a Firestore
- * document is capped at 1 MiB and the PNG alone is comfortably over half of it.
+ * `path` on an attachment is a URL the sender fetches at send time — nodemailer
+ * and the extension both accept that shape. It is why the caller passes signed
+ * URLs rather than the file bytes: a Firestore document is capped at 1 MiB and
+ * the PNG alone is comfortably over half of it.
  */
 function buildMailDocument({
     to,
