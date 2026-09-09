@@ -236,3 +236,58 @@ async function handleConfirm(req, res, token) {
         registeredProductId: result.registeredProductId || '',
     });
 }
+
+/* ====================================================================== *
+ * Solar Super Hero certificate
+ * ====================================================================== */
+
+/**
+ * Issues the customer's certificate when a registration is created.
+ *
+ * A TRIGGER rather than a step inside `confirm`, deliberately. Rendering means
+ * starting Chrome, and a customer who has just tapped "Confirm" should not be
+ * watching a spinner while a browser boots in another datacentre. Decoupling
+ * also means a render that fails is retried by the platform on its own, without
+ * the registration - which is the part that actually matters - being at risk.
+ *
+ * Second generation for the resources: Chrome needs far more memory than a
+ * default function gets, and a cold start that has to launch it needs longer
+ * than 60 seconds. `maxInstances` is a deliberate cap: each instance holds a
+ * browser, and an unbounded fan-out on a busy day would be an expensive way to
+ * render certificates nobody is waiting on.
+ */
+const { onDocumentCreated } = require('firebase-functions/v2/firestore');
+const { HERO_ENABLED, REGISTRATIONS_COLLECTION } = require('./lib/config');
+const heroFlow = require('./lib/hero-flow');
+
+exports.issueHeroCertificate = onDocumentCreated(
+    {
+        document: `${REGISTRATIONS_COLLECTION}/{registrationId}`,
+        memory: '1GiB',
+        timeoutSeconds: 300,
+        maxInstances: 5,
+        // Retried by the platform: every failure path here is transient
+        // (Chrome, Storage, Firestore contention) and `plan` is idempotent, so
+        // a retry re-renders at worst and never issues a second certificate.
+        retry: true,
+    },
+    async (event) => {
+        if (!HERO_ENABLED) return;
+
+        const data = event.data && event.data.data();
+        const uid = heroFlow.uidFromRegistration(data);
+        if (!uid) {
+            functions.logger.warn('hero certificate: registration has no userId', {
+                registrationId: event.params.registrationId,
+            });
+            return;
+        }
+
+        const result = await heroFlow.issueForUser(uid, { logger: functions.logger });
+        functions.logger.info('hero certificate', {
+            uid,
+            registrationId: event.params.registrationId,
+            ...result,
+        });
+    },
+);

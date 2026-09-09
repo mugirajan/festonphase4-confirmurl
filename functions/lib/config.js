@@ -90,6 +90,68 @@ function linkFor(token) {
     return `${PUBLIC_BASE_URL}?t=${encodeURIComponent(token)}`;
 }
 
+/* ------------------------------------------------------------------ *
+ * Solar Super Hero certificate
+ * ------------------------------------------------------------------ */
+
+/** One certificate per customer, keyed by their uid. */
+const HERO_COLLECTION = process.env.HERO_COLLECTION || 'hero_certificates';
+
+/**
+ * Storage prefix for the rendered files.
+ *
+ * Under a dedicated prefix rather than beside the points-claim photographs so
+ * a Storage rule can grant a customer read access to their own certificate
+ * without widening anything else.
+ */
+const HERO_STORAGE_PREFIX = process.env.HERO_STORAGE_PREFIX || 'hero-certificates';
+
+/**
+ * Bucket for the rendered files. Defaults to the project's own, which is what
+ * the app and the portal already read.
+ */
+const HERO_BUCKET = process.env.HERO_BUCKET || '';
+
+/**
+ * Who signs the certificate.
+ *
+ * The artwork shipped with `[Name of Signatory]` / `[Designation]` in it.
+ * Blanks here are NOT rendered as those placeholders - `signatoryLines()`
+ * drops the signature block entirely rather than printing a square bracket on
+ * a document a customer may frame. Set both to turn it on.
+ */
+const HERO_SIGNATORY_NAME = process.env.HERO_SIGNATORY_NAME || '';
+const HERO_SIGNATORY_DESIGNATION = process.env.HERO_SIGNATORY_DESIGNATION || '';
+
+/**
+ * Where the QR and the printed line point.
+ *
+ * `{n}` is replaced with the certificate number. The artwork's own
+ * `festonsev.com/verify` is deliberately NOT the default: that page does not
+ * exist yet, and a QR that leads nowhere is worse than no QR. Until Feston
+ * supply a real verification page this defaults to blank, and a blank verify
+ * URL drops the QR and the "Verify at" line rather than printing a dead link.
+ */
+const HERO_VERIFY_URL_TEMPLATE = process.env.HERO_VERIFY_URL_TEMPLATE || '';
+
+/** The verify URL for one certificate number, or '' when not configured. */
+function heroVerifyUrl(certificateNumber) {
+    if (!HERO_VERIFY_URL_TEMPLATE) return '';
+    return HERO_VERIFY_URL_TEMPLATE.replace('{n}', encodeURIComponent(certificateNumber));
+}
+
+/** Collection the Firebase "Trigger Email" extension watches. */
+const MAIL_COLLECTION = process.env.MAIL_COLLECTION || 'mail';
+
+/** From: address on the certificate email. Blank lets the extension default. */
+const HERO_MAIL_FROM = process.env.HERO_MAIL_FROM || '';
+
+/** Master switch, so the whole feature can be turned off without a rollback. */
+const HERO_ENABLED = process.env.HERO_ENABLED !== 'false';
+
+/** Send the certificate email. Off leaves the certificate itself working. */
+const HERO_EMAIL_ENABLED = process.env.HERO_EMAIL_ENABLED !== 'false';
+
 module.exports = {
     PENDING_COLLECTION,
     REGISTRATIONS_COLLECTION,
@@ -102,4 +164,15 @@ module.exports = {
     TTL_MINUTES,
     TTL_HOURS,
     linkFor,
+    HERO_COLLECTION,
+    HERO_STORAGE_PREFIX,
+    HERO_BUCKET,
+    HERO_SIGNATORY_NAME,
+    HERO_SIGNATORY_DESIGNATION,
+    HERO_VERIFY_URL_TEMPLATE,
+    heroVerifyUrl,
+    MAIL_COLLECTION,
+    HERO_MAIL_FROM,
+    HERO_ENABLED,
+    HERO_EMAIL_ENABLED,
 };
