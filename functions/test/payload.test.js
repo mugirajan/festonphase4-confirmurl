@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 
-const { payloadFields, PAYLOAD_FIELDS, NEVER_COPIED } = require('../lib/payload');
+const { payloadFields, webCompatFields, PAYLOAD_FIELDS, NEVER_COPIED } = require('../lib/payload');
 
 /** A pending record carrying every field the app is documented to write. */
 function fullPending() {
@@ -78,4 +78,64 @@ test('undefined is dropped but empty, false and zero are kept', () => {
 test('an empty pending record yields an empty payload rather than throwing', () => {
     assert.deepEqual(payloadFields({}), {});
     assert.deepEqual(payloadFields(), {});
+});
+
+/*
+ * The portal's field names.
+ *
+ * `registered_products` carries two conventions and the admin portal reads the
+ * web one. Its certificate generator looks a registration up with
+ * `where('Serialnumber', '==', serial)` — capital S — so a registration written
+ * with only the mobile names is invisible to it, and an operator is told "No
+ * registered product found" about a row that is plainly there.
+ */
+test('the portal can find a registration this function wrote', () => {
+    const out = webCompatFields({
+        serialnumber: '2209039993',
+        inverterModel: 'FE-8.0-3P-HY',
+        producttype: 'HYBRID',
+        productFamily: 'hybrid',
+        customerAddress: '12 Anna Salai, Chennai',
+    });
+
+    assert.equal(out.Serialnumber, '2209039993');
+    assert.equal(out.name, 'FE-8.0-3P-HY');
+    assert.equal(out.type, 'HYBRID');
+    assert.equal(out.selectedProductType, 'hybrid');
+    assert.equal(out.selectedAddress, '12 Anna Salai, Chennai');
+});
+
+test('the serial falls back to inverterSerial, the other name the app uses', () => {
+    assert.equal(webCompatFields({ inverterSerial: '2209039994' }).Serialnumber, '2209039994');
+});
+
+test('an absent value emits no key rather than an empty one', () => {
+    // An empty `Serialnumber` is worse than none: a query for '' would match it,
+    // so a blank row could be returned as somebody's registration.
+    const out = webCompatFields({ serialnumber: '   ', inverterModel: '' });
+    assert.ok(!('Serialnumber' in out));
+    assert.ok(!('name' in out));
+    assert.deepEqual(webCompatFields({}), {});
+    assert.deepEqual(webCompatFields(), {});
+});
+
+test('the fields the certificate prints survive the copy', () => {
+    // Phase and capacity are ON the certificate and were on the pending record
+    // all along — they were simply never in the allowlist, so they never
+    // reached the registration.
+    const out = payloadFields({
+        Phase: '3',
+        capacity: '8',
+        submodel: 'Rack',
+        invoiceUrl: 'https://example.test/invoice.pdf',
+        installationPhoto1Url: '',
+        installationPhoto2Url: '',
+    });
+
+    assert.equal(out.Phase, '3');
+    assert.equal(out.capacity, '8');
+    assert.equal(out.submodel, 'Rack');
+    assert.equal(out.invoiceUrl, 'https://example.test/invoice.pdf');
+    assert.ok('installationPhoto1Url' in out);
+    assert.ok('installationPhoto2Url' in out);
 });

@@ -4,7 +4,7 @@ const admin = require('firebase-admin');
 
 const { PENDING_COLLECTION, REGISTRATIONS_COLLECTION, SERIALS_COLLECTION } = require('./config');
 const { isExpired } = require('./expiry');
-const { payloadFields } = require('./payload');
+const { payloadFields, webCompatFields } = require('./payload');
 const { resolveAward } = require('./award-rule');
 const { isFirstInstall, registeredPromptly } = require('./system-awards');
 
@@ -381,6 +381,10 @@ async function completeRegistration(token, { userAgent, verifiedPhone, requirePh
 
         tx.set(registrationRef, {
             ...payloadFields(pending),
+            // The same facts under the portal's field names. Without these the
+            // registration is invisible to the admin portal and no certificate
+            // can be generated for it — see `webCompatFields`.
+            ...webCompatFields(pending),
             userId,
             // Null when the serial was not in inventory — absent rather than 0, so
             // a reader can tell "not known" from "a zero-kilowatt install".

@@ -46,6 +46,15 @@ const PAYLOAD_FIELDS = [
     'installerName',
     'installerContact',
     'warrantyEndDate',
+    // These sit on the pending record and were simply never listed, so they
+    // never reached the registration. `Phase` and `capacity` are printed on the
+    // warranty certificate; the media URLs are the evidence of the install.
+    'Phase',
+    'capacity',
+    'submodel',
+    'invoiceUrl',
+    'installationPhoto1Url',
+    'installationPhoto2Url',
 ];
 
 /**
@@ -94,4 +103,61 @@ function payloadFields(pending = {}) {
     return out;
 }
 
-module.exports = { payloadFields, PAYLOAD_FIELDS, ATTRIBUTION_FIELDS, NEVER_COPIED };
+/**
+ * The web portal's field names for the same facts.
+ *
+ * `registered_products` has TWO field conventions, and both are live:
+ *
+ *   web portal / certificate   Serialnumber · name · type · capacity · Phase
+ *   mobile app / this function serialnumber · inverterModel · producttype
+ *
+ * The header above says the pending record carries "the same field set as a
+ * `registered_products` document". That is true of the MOBILE shape and false
+ * of the web one, and the gap is not cosmetic: the portal's certificate
+ * generator looks a registration up with
+ * `where('Serialnumber', '==', serial)` — capital S — so **every registration
+ * completed through the app was invisible to it**. All 25 sampled existing rows
+ * carry `Serialnumber`; the ones this function wrote carried only
+ * `serialnumber`, and produced "No registered product found" for a row sitting
+ * right there in the collection.
+ *
+ * Both conventions are written rather than picking a winner. Renaming would
+ * break whichever half of the estate reads the other name, and neither half is
+ * ours to migrate from here. Derived, never asked of the caller, so the app
+ * needs no release for this.
+ *
+ * Only fields with a real value are emitted — an empty `Serialnumber` would be
+ * worse than none, because a query for '' would match it.
+ */
+function webCompatFields(pending = {}) {
+    const str = (v) => (typeof v === 'string' ? v.trim() : typeof v === 'number' ? String(v) : '');
+    const out = {};
+
+    // The lookup key the portal and the certificate generator both query.
+    const serial = str(pending.serialnumber) || str(pending.inverterSerial);
+    if (serial) out.Serialnumber = serial;
+
+    // The portal calls the model "name" and the family "type".
+    const model = str(pending.inverterModel) || str(pending.modelnumber);
+    if (model) out.name = model;
+
+    const type = str(pending.producttype) || str(pending.family) || str(pending.productFamily);
+    if (type) out.type = type;
+
+    const family = str(pending.productFamily) || str(pending.family);
+    if (family) out.selectedProductType = family;
+
+    // The customer's address, under the name the portal reads it by.
+    const address = str(pending.customerAddress) || str(pending.selectedAddress);
+    if (address) out.selectedAddress = address;
+
+    return out;
+}
+
+module.exports = {
+    payloadFields,
+    webCompatFields,
+    PAYLOAD_FIELDS,
+    ATTRIBUTION_FIELDS,
+    NEVER_COPIED,
+};
