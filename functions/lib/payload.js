@@ -55,6 +55,11 @@ const PAYLOAD_FIELDS = [
     'invoiceUrl',
     'installationPhoto1Url',
     'installationPhoto2Url',
+    // Phase 4 item #1 — Step 5 Evidence (address-proof snap + GPS pin).
+    'addressProofUrl',
+    'gpsLat',
+    'gpsLng',
+    'gpsAccuracy',
 ];
 
 /**
