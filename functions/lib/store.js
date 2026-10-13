@@ -75,6 +75,19 @@ function consentFields(acknowledgements = {}, verifiedPhone) {
         out.phoneVerified = true;
         out.phoneVerifiedNumber = verifiedPhone;
     }
+    // How consent was obtained (slide 13). 'otp' when the customer verified
+    // their phone on the page, 'link' when OTP was off, 'verbal' when Feston
+    // support recorded it over the phone — with who, when and what was said.
+    if (acknowledgements.consentMethod === 'verbal') {
+        out.consentMethod = 'verbal';
+        out.consentRecordedBy = String(acknowledgements.consentRecordedBy || '');
+        out.consentRecordedByName = String(acknowledgements.consentRecordedByName || '');
+        out.consentNote = String(acknowledgements.consentNote || '');
+        if (acknowledgements.consentCalledAt) out.consentCalledAt = acknowledgements.consentCalledAt;
+        if (acknowledgements.consentRecordingRef) out.consentRecordingRef = String(acknowledgements.consentRecordingRef);
+    } else {
+        out.consentMethod = verifiedPhone ? 'otp' : 'link';
+    }
     return out;
 }
 
@@ -119,7 +132,7 @@ async function resolveOwnerFor(tx, firestore, pending) {
     return '';
 }
 
-async function completeRegistration(token, { userAgent, verifiedPhone, requirePhoneMatch, acknowledgements } = {}) {
+async function completeRegistration(token, { userAgent, verifiedPhone, requirePhoneMatch, acknowledgements, ignoreExpiry = false } = {}) {
     const firestore = db();
     const ref = pendingRef(token);
 
@@ -165,7 +178,9 @@ async function completeRegistration(token, { userAgent, verifiedPhone, requirePh
             return { status: pending.status === 'expired' ? 'expired' : 'cancelled' };
         }
 
-        if (isExpired(pending.expiresAt)) return { status: 'expired' };
+        // The verbal-consent route (lib/verbal-consent.js) is the only caller
+        // allowed past an expired link: Feston staff have spoken to the customer.
+        if (!ignoreExpiry && isExpired(pending.expiresAt)) return { status: 'expired' };
 
         // Without an owner the registration would not appear in anyone's "My
         // Products", and the serial would still be flipped — leaving a product

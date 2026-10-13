@@ -67,6 +67,7 @@ function tokenFrom(req) {
 }
 
 const { lookupCustomerForInstaller } = require('./lib/installer-lookup');
+const { recordVerbalConsent } = require('./lib/verbal-consent');
 const heroServe = require('./lib/hero-serve');
 const { renderHeroPage } = require('./lib/hero-page');
 
@@ -154,6 +155,27 @@ exports.confirm = functions.https.onRequest((req, res) => {
             } catch (error) {
                 functions.logger.error('lookup-customer failed', error);
                 return sendJson(res, 500, { status: 'error', message: 'Lookup failed' });
+            }
+        }
+
+        // Verbal-consent fallback (slide 13): Feston support records a phone
+        // call and completes the registration. Staff ID token required; see
+        // lib/verbal-consent.js for what it checks and why expiry is waived.
+        if (req.method === 'POST' && action === 'verbal-consent') {
+            try {
+                const result = await recordVerbalConsent({
+                    firestore: admin.firestore(),
+                    verifyIdToken: (t) => admin.auth().verifyIdToken(t),
+                    authorization: req.get('authorization'),
+                    body: req.body,
+                    complete: (t, opts) => store.completeRegistration(t, opts),
+                    userAgent: asString(req.get('user-agent')),
+                    logger: functions.logger,
+                });
+                return sendJson(res, result.status, result.body);
+            } catch (error) {
+                functions.logger.error('verbal-consent failed', error);
+                return sendJson(res, 500, { status: 'error', message: 'Could not record the consent' });
             }
         }
 

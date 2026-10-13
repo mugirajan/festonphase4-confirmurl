@@ -274,6 +274,53 @@ function registrations() {
         .map(([, value]) => value);
 }
 
+// --- verbal consent (slide 13) ----------------------------------------------
+
+test('staff-recorded verbal consent completes an EXPIRED link and stamps the method', async () => {
+    seedPending({ expiresAt: makeTimestamp(Date.now() - HOUR), gpsLat: 1, gpsLng: 1 });
+    const store = require('../lib/store');
+    const result = await store.completeRegistration(TOKEN, {
+        userAgent: 'portal',
+        verifiedPhone: '',
+        requirePhoneMatch: false,
+        ignoreExpiry: true,
+        acknowledgements: {
+            acceptedTerms: true,
+            acceptedDataForTraining: true,
+            consentMethod: 'verbal',
+            consentRecordedBy: 'u_crm',
+            consentRecordedByName: 'Support',
+            consentNote: 'Read out and agreed',
+        },
+    });
+    assert.equal(result.status, 'completed');
+    const row = registrations()[0];
+    assert.equal(row.consentMethod, 'verbal');
+    assert.equal(row.consentRecordedByName, 'Support');
+    assert.equal(row.consentNote, 'Read out and agreed');
+    assert.equal(row.phoneVerified, undefined);
+});
+
+test('the same expired link is still refused on the normal path', async () => {
+    seedPending({ expiresAt: makeTimestamp(Date.now() - HOUR) });
+    const res = await pressConfirm(TOKEN);
+    assert.equal(res.statusCode, 410);
+    assert.equal(registrations().length, 0);
+});
+
+test('a link confirmation records consentMethod link (OTP off in this harness)', async () => {
+    seedPending({ gpsLat: 1, gpsLng: 1 });
+    await pressConfirm(TOKEN);
+    assert.equal(registrations()[0].consentMethod, 'link');
+});
+
+test('the verbal-consent route refuses a request with no staff token', async () => {
+    seedPending();
+    const res = await call({ method: 'POST', query: { action: 'verbal-consent' }, body: { token: TOKEN, outcome: 'consented', note: 'said yes' } });
+    assert.equal(res.statusCode, 403);
+    assert.equal(registrations().length, 0);
+});
+
 // --- fraud signals (slide 16) -----------------------------------------------
 
 test('a clean registration carries no risk flags and queues no audit', async () => {
