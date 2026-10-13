@@ -60,6 +60,10 @@ const PAYLOAD_FIELDS = [
     'gpsLat',
     'gpsLng',
     'gpsAccuracy',
+    // Fraud signals (slide 16): photo hashes and capture times from the app,
+    // judged at confirm by lib/fraud.js.
+    'evidenceHashes',
+    'evidenceCapturedAt',
 ];
 
 /**

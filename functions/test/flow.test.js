@@ -274,6 +274,72 @@ function registrations() {
         .map(([, value]) => value);
 }
 
+// --- fraud signals (slide 16) -----------------------------------------------
+
+test('a clean registration carries no risk flags and queues no audit', async () => {
+    seedPending({ gpsLat: 13.04, gpsLng: 80.13, evidenceHashes: [{ kind: 'live1', sha256: 'a'.repeat(64) }] });
+    const res = await pressConfirm(TOKEN);
+    assert.equal(res.body.status, 'completed');
+    const row = registrations()[0];
+    assert.equal(row.riskFlags, undefined, 'no riskFlags on a clean row');
+    assert.equal([...documents.keys()].filter((k) => k.startsWith('otp_audits/')).length, 0, 'no audit queued');
+    // The photo hash is now claimed by this registration.
+    const claim = documents.get(key('evidence_hashes', 'a'.repeat(64)));
+    assert.ok(claim, 'hash recorded');
+    assert.equal(claim.registrationId, res.body.registeredProductId);
+});
+
+test('a photo already used on another registration is flagged and an audit is queued', async () => {
+    seedPending({ gpsLat: 13.04, gpsLng: 80.13, evidenceHashes: [{ kind: 'live1', sha256: 'b'.repeat(64) }] });
+    documents.set(key('evidence_hashes', 'b'.repeat(64)), { registrationId: 'reg_old', installerId: 'inst_55', kind: 'live1' });
+    const res = await pressConfirm(TOKEN);
+    assert.equal(res.body.status, 'completed', 'the customer is never refused');
+    const row = registrations()[0];
+    assert.deepEqual(row.riskFlags, ['duplicate_photo']);
+    assert.match(row.riskDetails[0].detail, /reg_old/);
+    const audits = [...documents.entries()].filter(([k]) => k.startsWith('otp_audits/')).map(([, v]) => v);
+    assert.equal(audits.length, 1, 'one audit queued');
+    assert.equal(audits[0].installId, res.body.registeredProductId);
+    assert.equal(audits[0].flagged, true);
+    assert.equal(audits[0].result, 'pending');
+    assert.match(audits[0].quarter, /^\d{4}-Q[1-4]$/);
+    // The earlier registration keeps its claim on the hash.
+    assert.equal(documents.get(key('evidence_hashes', 'b'.repeat(64))).registrationId, 'reg_old');
+});
+
+test('the customer phone being the engineer phone is flagged', async () => {
+    seedPending({ gpsLat: 13.04, gpsLng: 80.13, customerPhone: '9876543210', registeredByInstallerPhone: '+91 98765 43210' });
+    await pressConfirm(TOKEN);
+    assert.deepEqual(registrations()[0].riskFlags, ['installer_phone_match']);
+});
+
+test('a phone with two earlier registrations is a cluster', async () => {
+    seedPending({ gpsLat: 13.04, gpsLng: 80.13 });
+    documents.set(key('registered_products', 'r1'), { customerPhone: '9043730533' });
+    documents.set(key('registered_products', 'r2'), { customerPhone: '9043730533' });
+    await pressConfirm(TOKEN);
+    const mine = registrations().find((r) => r.serialnumber === '2505063529');
+    assert.deepEqual(mine.riskFlags, ['repeat_phone']);
+});
+
+test('no GPS pin and a week-old photo are both flagged', async () => {
+    seedPending({ evidenceCapturedAt: { live1: new Date(Date.now() - 10 * 24 * HOUR).toISOString() } });
+    await pressConfirm(TOKEN);
+    const row = registrations()[0];
+    assert.deepEqual(row.riskFlags, ['gps_missing', 'stale_photo']);
+    assert.equal(row.riskScore, 2);
+});
+
+test('fraud: the judgement is pure and the flag set is exactly these six', () => {
+    const fraud = require('../lib/fraud');
+    const clean = fraud.evaluateRisk({ pending: { gpsLat: 1, gpsLng: 1 }, reads: { hashDocs: [], samePhone: 0, sameAddress: 0 }, installerPhone: '', registrationId: 'x' });
+    assert.deepEqual(clean.flags, []);
+    assert.deepEqual(fraud.riskFields(clean, 0), {});
+    assert.deepEqual(fraud.hashesOf({ evidenceHashes: [{ sha256: 'ZZ' }, { kind: 'live2', sha256: 'c'.repeat(64) }, { sha256: 'c'.repeat(64) }] }), [{ kind: 'live2', sha256: 'c'.repeat(64) }]);
+    assert.equal(fraud.quarterKeyFor(new Date(2026, 9, 13)), '2026-Q3');
+    assert.equal(fraud.quarterKeyFor(new Date(2026, 1, 1)), '2025-Q4');
+});
+
 // --- the page ----------------------------------------------------------------
 
 test('the link renders the review with a confirm button', async () => {

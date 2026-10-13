@@ -7,6 +7,7 @@ const { isExpired } = require('./expiry');
 const { payloadFields, webCompatFields } = require('./payload');
 const { resolveAward } = require('./award-rule');
 const { isFirstInstall, registeredPromptly } = require('./system-awards');
+const fraud = require('./fraud');
 
 /**
  * Firestore access for the confirmation flow.
@@ -256,6 +257,13 @@ async function completeRegistration(token, { userAgent, verifiedPhone, requirePh
         let awardPoints = 0;
         /** 'per-kw' or 'flat' — recorded so the ledger says how it was worked out. */
         let awardBasis = 'flat';
+        /** The engineer's own number, for the installer_phone_match signal. */
+        let installerPhone = '';
+
+        // Fraud signals (slide 16) — the READS, taken now because Firestore
+        // refuses any read after the first write in a transaction. Judged
+        // below, once the installer's row is known. See lib/fraud.js.
+        const riskReads = await fraud.readRiskSignals(tx, firestore, pending);
 
         // The three SYSTEM awards (P6/B4) — derived, never claimed. Collected as
         // {action, points, subject, awardKey} and written after the base award.
@@ -312,6 +320,7 @@ async function completeRegistration(token, { userAgent, verifiedPhone, requirePh
                 // BEFORE the increment below. Once `lifetimeInstalls` moves, the
                 // fact that this was their first is gone.
                 isFirstInstallForEngineer = isFirstInstall(installerDoc.data());
+                installerPhone = String((installerDoc.data() || {}).phone || '');
 
                 // The company's lifetime count is the sum of its installers', so
                 // it moves in the same transaction. Read first for the same
@@ -444,6 +453,14 @@ async function completeRegistration(token, { userAgent, verifiedPhone, requirePh
 
         const confirmedAt = admin.firestore.Timestamp.now();
 
+        const risk = fraud.evaluateRisk({
+            pending,
+            reads: riskReads,
+            installerPhone,
+            registrationId: registrationRefId,
+            now: confirmedAt.toMillis(),
+        });
+
         tx.set(registrationRef, {
             ...payloadFields(pending),
             // The same facts under the portal's field names. Without these the
@@ -469,7 +486,29 @@ async function completeRegistration(token, { userAgent, verifiedPhone, requirePh
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
             ...confirmationMarkers(confirmedAt),
             ...consentFields(acknowledgements, verifiedPhone),
+            // Fraud signals, when any fired. The registration still goes
+            // through — the customer did nothing wrong — and an OTP audit is
+            // queued below; a failed audit is what claws the points back.
+            ...fraud.riskFields(risk, confirmedAt),
         });
+
+        const riskAuditId = fraud.writeRiskRecords(tx, firestore, {
+            risk,
+            registrationId: registrationRef.id,
+            installerId,
+            installerDocId: installerRef ? installerRef.id : '',
+            companyId: awardCompanyId,
+            customerPhone: pending.customerContact || pending.customerPhone,
+            now: confirmedAt,
+            quarterKey: fraud.quarterKeyFor(new Date(confirmedAt.toMillis())),
+        });
+        if (risk.flags.length) {
+            console.warn('registration flagged at confirmation', JSON.stringify({
+                registrationId: registrationRef.id,
+                flags: risk.flags,
+                auditId: riskAuditId,
+            }));
+        }
 
         if (serialRef) tx.update(serialRef, { registered: true });
 
