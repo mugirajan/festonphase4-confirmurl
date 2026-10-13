@@ -66,9 +66,32 @@ function tokenFrom(req) {
     return asString(req.query && (req.query.t || req.query.token));
 }
 
+const { lookupCustomerForInstaller } = require('./lib/installer-lookup');
+
 exports.confirm = functions.https.onRequest((req, res) => {
     return cors(req, res, async () => {
         const wantsJson = req.method === 'POST';
+
+        // Installer customer lookup — no `?t=`, authenticated by the
+        // installer's ID token. Hosted here for want of a deployable function
+        // of its own; see lib/installer-lookup.js for why and what it guards.
+        if (req.method === 'POST' && asString(req.query && req.query.action) === 'lookup-customer') {
+            try {
+                const body = (req.body && typeof req.body === 'object') ? req.body : {};
+                const result = await lookupCustomerForInstaller({
+                    firestore: admin.firestore(),
+                    verifyIdToken: (t) => admin.auth().verifyIdToken(t),
+                    authorization: req.get('authorization'),
+                    phone: asString(body.phone),
+                    logger: functions.logger,
+                });
+                return sendJson(res, result.status, result.body);
+            } catch (error) {
+                functions.logger.error('lookup-customer failed', error);
+                return sendJson(res, 500, { status: 'error', message: 'Lookup failed' });
+            }
+        }
+
         const token = tokenFrom(req);
 
         // Shape-check before the token is used as a document id, so scanning

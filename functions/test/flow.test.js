@@ -61,10 +61,40 @@ function docRef(collection, id) {
     };
 }
 
+/**
+ * An equality query with a limit — the one shape store.js runs inside the
+ * transaction (`installers where uid == … limit 1`, since 2026-10-12). Resolved
+ * by scanning the map; a snapshot carries `empty`, `docs`, and each doc its
+ * `id`, `ref`, `exists` and `data()`, which is all the code reads.
+ */
+function queryRef(collection, field, value, max) {
+    return {
+        _query: true,
+        limit: (n) => queryRef(collection, field, value, n),
+        async get() {
+            const prefix = `${collection}/`;
+            const docs = [];
+            for (const [k, data] of documents) {
+                if (!k.startsWith(prefix) || data[field] !== value) continue;
+                const id = k.slice(prefix.length);
+                docs.push({ id, ref: docRef(collection, id), exists: true, data: () => data });
+                if (max && docs.length >= max) break;
+            }
+            return { empty: docs.length === 0, docs };
+        },
+    };
+}
+
 const firestoreApi = () => ({
     // `doc()` with no argument mints an auto-id, which is how the registration
     // document is created.
-    collection: (name) => ({ doc: (id) => docRef(name, id === undefined ? nextAutoId() : id) }),
+    collection: (name) => ({
+        doc: (id) => docRef(name, id === undefined ? nextAutoId() : id),
+        where: (field, op, value) => {
+            if (op !== '==') throw new Error(`fake Firestore: unsupported operator ${op}`);
+            return queryRef(name, field, value, undefined);
+        },
+    }),
     async runTransaction(fn) {
         // Single-threaded fake: reads and writes apply immediately. Enough to
         // exercise the transaction body; concurrency itself is Firestore's job.
@@ -376,6 +406,33 @@ test('a record with no owner is refused rather than half-written', async () => {
     assert.equal(logged.errors.length, 1, 'and it is logged for someone to act on');
 });
 
+test('a record with no owner but a known customer phone is resolved at confirm', async () => {
+    // Since 2026-09-27 the installer's app cannot read `users`, so for a repeat
+    // customer it stages the record with userId '' and the phone it was given.
+    // The server matches it (2026-10-12); the registration lands on the
+    // existing account, not on nobody and not on a duplicate.
+    seedPending({ userId: '', customerContact: '9043730533' });
+    documents.set(key('users', 'cust_7'), { phone: '9043730533', email: 'raju.k@example.com' });
+
+    const res = await pressConfirm(TOKEN);
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(registrations().length, 1);
+    assert.equal(registrations()[0].userId, 'cust_7', 'owned by the matched customer');
+    assert.equal(registrations()[0].ownerResolvedAtConfirm, true, 'and says so');
+    assert.equal(serialDoc().registered, true);
+});
+
+test('a record with no owner falls back to the customer email', async () => {
+    seedPending({ userId: '', customerContact: '', customerPhone: '' });
+    documents.set(key('users', 'cust_8'), { phone: '', email: 'raju.k@example.com' });
+
+    const res = await pressConfirm(TOKEN);
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(registrations()[0].userId, 'cust_8');
+});
+
 test('a serial missing from inventory still registers the product', async () => {
     seedPending({ serialDocId: 'not_in_inventory' });
     const res = await pressConfirm(TOKEN);
@@ -449,6 +506,42 @@ test('confirming credits the installer and their company with one install', asyn
     assert.equal(installerDoc().lifetimeInstalls, 11, "installer's lifetime count moves by one");
     assert.equal(companyDoc().lifetimeInstalls, 11, "company's rollup moves with it");
     assert.equal(installerDoc().points, 50, 'and the completion points are awarded');
+});
+
+test('a portal-provisioned installer (row id ≠ uid) is credited too', async () => {
+    // The Installers page keys rows by auto-id and stores the Auth uid in a
+    // field; the app stamps that uid as `registeredByInstallerId`. Before
+    // 2026-10-12 the direct `doc(uid)` read missed and the installer was paid
+    // nothing — the first real engineer to complete a flow saw exactly that.
+    seedPending(); // registeredByInstallerId: 'inst_55' — no row keyed by that id
+    documents.set(key('installers', 'row_x9'), {
+        name: 'Bharath Engineer One (Test)',
+        uid: 'inst_55',
+        companyId: 'co_9',
+        lifetimeInstalls: 0,
+        points: 0,
+        active: true,
+    });
+    documents.set(key('companies', 'co_9'), { name: 'Nuera', lifetimeInstalls: 0 });
+    documents.set(key('serial_num', SERIAL_DOC_ID), {
+        serialnumber: '2505063529',
+        registered: false,
+        kilowatt: '5',
+    });
+    documents.set(key('points_rates', 'other'), { pointsPerKw: 10, active: true });
+
+    const res = await pressConfirm(TOKEN);
+
+    assert.equal(res.statusCode, 200);
+    const row = documents.get(key('installers', 'row_x9'));
+    assert.equal(row.lifetimeInstalls, 1, 'found by uid field, install counted');
+    assert.equal(row.points, 50, 'and paid');
+    assert.equal(companyDoc().lifetimeInstalls, 1, "company's rollup moves with it");
+    const ledger = [...documents.entries()].filter(([k]) => k.startsWith('installer_points/'));
+    assert.ok(ledger.some(([, d]) => d.action === 'complete_registration'), 'ledger row written');
+    // What lets the company's portal find this registration under the rules.
+    assert.equal(registrations()[0].companyId, 'co_9', 'registration carries the company');
+    assert.equal(registrations()[0].registeredByInstallerDocId, 'row_x9', 'and the installer row id');
 });
 
 test('confirming twice counts the install once', async () => {

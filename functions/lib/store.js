@@ -93,6 +93,31 @@ function consentFields(acknowledgements = {}, verifiedPhone) {
  *   { status: 'completed', registeredProductId, alreadyCompleted, serialFlipped }
  *   { status: 'not-found' | 'expired' | 'cancelled' | 'invalid' }
  */
+/**
+ * The existing customer a pending record belongs to, when the app could not
+ * say. Matched on the phone the installer typed (the last 10 digits, under
+ * the bare, +91 and 91 spellings the two apps store), then on the email.
+ * Reads go through the transaction so they order before its writes. Returns
+ * '' when nothing matches — the caller then refuses the record, as it always
+ * did for an ownerless one.
+ */
+async function resolveOwnerFor(tx, firestore, pending) {
+    const users = firestore.collection('users');
+    const national = last10(pending.customerContact) || last10(pending.customerPhone);
+    if (national) {
+        for (const phone of [national, `+91${national}`, `91${national}`]) {
+            const snap = await tx.get(users.where('phone', '==', phone).limit(1));
+            if (!snap.empty) return snap.docs[0].id;
+        }
+    }
+    const email = typeof pending.customerEmail === 'string' ? pending.customerEmail.trim() : '';
+    if (email) {
+        const snap = await tx.get(users.where('email', '==', email).limit(1));
+        if (!snap.empty) return snap.docs[0].id;
+    }
+    return '';
+}
+
 async function completeRegistration(token, { userAgent, verifiedPhone, requirePhoneMatch, acknowledgements } = {}) {
     const firestore = db();
     const ref = pendingRef(token);
@@ -145,7 +170,22 @@ async function completeRegistration(token, { userAgent, verifiedPhone, requirePh
         // Products", and the serial would still be flipped — leaving a product
         // that cannot be registered again and belongs to no one. Refusing is
         // recoverable; writing it is not.
-        const userId = typeof pending.userId === 'string' ? pending.userId.trim() : '';
+        let userId = typeof pending.userId === 'string' ? pending.userId.trim() : '';
+
+        // Owner resolved HERE, server-side, when the app could not.
+        //
+        // Since the 2026-09-27 rules rewrite an installer's app cannot read
+        // `users` to find an existing customer by phone, so for a repeat
+        // customer it stages the record with a blank `userId` and the phone
+        // and email it was given. The Admin SDK is not bound by the rules, so
+        // the match is made here, inside the transaction, before anything is
+        // written. A brand-new customer still arrives with a uid the app
+        // created; this path is only for the ones the app could not see.
+        let ownerResolvedAtConfirm = false;
+        if (!userId) {
+            userId = await resolveOwnerFor(tx, firestore, pending);
+            ownerResolvedAtConfirm = !!userId;
+        }
         if (!userId) return { status: 'invalid', reason: 'missing-userId' };
 
         // OTP: the phone verified by Firebase (from the ID token) must be the
@@ -233,8 +273,33 @@ async function completeRegistration(token, { userAgent, verifiedPhone, requirePh
         let awardCompanyId = '';
 
         if (installerId) {
-            const ref = firestore.collection('installers').doc(installerId);
-            const installerDoc = await tx.get(ref);
+            // Two keying conventions coexist on `installers`, and this read has
+            // to find a row under either:
+            //
+            //   • app-provisioned rows are keyed by the installer's Auth uid, so
+            //     `doc(installerId)` is a direct hit;
+            //   • portal-provisioned rows (the Installers page, `createLogin`)
+            //     are keyed by an auto-id and carry the uid in a `uid` FIELD.
+            //
+            // `registeredByInstallerId` is always the uid (the app stamps
+            // `auth.uid`, and the rules only let it stamp its own), so for a
+            // portal-provisioned engineer the direct read misses, `installerRef`
+            // stayed null, and the whole credit block below was skipped — the
+            // registration completed and the installer was paid nothing. Found
+            // on the first real device run, 2026-10-12. The mobile app's own
+            // `findInstallerDoc` has resolved both shapes since 2026-09-09; this
+            // is the same fallback on the server side.
+            let ref = firestore.collection('installers').doc(installerId);
+            let installerDoc = await tx.get(ref);
+            if (!installerDoc.exists) {
+                const byUid = await tx.get(
+                    firestore.collection('installers').where('uid', '==', installerId).limit(1),
+                );
+                if (!byUid.empty) {
+                    installerDoc = byUid.docs[0];
+                    ref = installerDoc.ref;
+                }
+            }
 
             // An installer deleted between staging the link and the customer
             // confirming must not fail the registration. `tx.update` on a
@@ -386,6 +451,18 @@ async function completeRegistration(token, { userAgent, verifiedPhone, requirePh
             // can be generated for it — see `webCompatFields`.
             ...webCompatFields(pending),
             userId,
+            // Set only when the owner was matched here rather than stamped by
+            // the app — so a reader can tell "linked by phone at confirm" from
+            // "the app knew the uid". Absent otherwise, not false.
+            ...(ownerResolvedAtConfirm ? { ownerResolvedAtConfirm: true } : {}),
+            // The installer company this install belongs to, from the
+            // installer's own row (2026-10-12). Until now a registration named
+            // its engineer by uid and nothing else, so an installer company's
+            // portal — allowed by the rules to read only its OWN rows — could
+            // not ask for them: the rules need a field to match on, and this
+            // is it. Absent when no installer row was found, never ''.
+            ...(awardCompanyId ? { companyId: awardCompanyId } : {}),
+            ...(installerRef ? { registeredByInstallerDocId: installerRef.id } : {}),
             // Null when the serial was not in inventory — absent rather than 0, so
             // a reader can tell "not known" from "a zero-kilowatt install".
             capacityKw,
