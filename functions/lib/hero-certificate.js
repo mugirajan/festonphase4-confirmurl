@@ -177,6 +177,7 @@ function renderHeroCertificateHtml({
 
 module.exports = {
     TOKENS,
+    TEMPLATE,
     TEMPLATE_PATH,
     escapeHtml,
     formatIssueDate,

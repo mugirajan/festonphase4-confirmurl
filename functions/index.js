@@ -67,10 +67,75 @@ function tokenFrom(req) {
 }
 
 const { lookupCustomerForInstaller } = require('./lib/installer-lookup');
+const heroServe = require('./lib/hero-serve');
+const { renderHeroPage } = require('./lib/hero-page');
+
+/**
+ * GET ?action=hero&n=<number> — the certificate's web page.
+ * GET ?action=hero-file&n=<number>&f=<variant>[&dl=1] — one of its files.
+ *
+ * Public by certificate number; see lib/hero-serve.js for what that exposes
+ * and why. Returns true when the request was one of these and has been
+ * answered, so the confirm routing below is untouched.
+ */
+async function handleHero(req, res, action) {
+    if (req.method !== 'GET' || (action !== 'hero' && action !== 'hero-file')) return false;
+
+    const number = heroServe.normaliseNumber(req.query && (req.query.n || req.query.c));
+    const certificate = number ? await heroServe.findByNumber(admin.firestore(), number) : null;
+
+    if (action === 'hero') {
+        if (!certificate) {
+            sendHtml(res, 404, renderUnavailablePage({ reason: 'no-certificate', logoUrl: LOGO_URL }));
+            return true;
+        }
+        sendHtml(res, 200, renderHeroPage({ certificate, logoUrl: LOGO_URL }));
+        return true;
+    }
+
+    const file = certificate && certificate.status === 'ready'
+        ? heroServe.fileFor(certificate, asString(req.query && req.query.f))
+        : null;
+    if (!file) {
+        sendJson(res, 404, { status: 'not-found' });
+        return true;
+    }
+
+    // The object path never changes between re-renders; the version does.
+    // An ETag on the version lets a browser revisit the page for free.
+    const etag = `"v${Number(certificate.version || 0)}"`;
+    res.set('Cache-Control', 'private, max-age=0, must-revalidate');
+    res.set('ETag', etag);
+    if (req.get('if-none-match') === etag) {
+        res.status(304).end();
+        return true;
+    }
+
+    const bytes = await heroServe.readFile(file.path);
+    const disposition = asString(req.query && req.query.dl) ? 'attachment' : 'inline';
+    res.set('Content-Type', file.contentType);
+    res.set('Content-Disposition', `${disposition}; filename="${file.filename}"`);
+    res.status(200).send(bytes);
+    return true;
+}
 
 exports.confirm = functions.https.onRequest((req, res) => {
     return cors(req, res, async () => {
         const wantsJson = req.method === 'POST';
+        const action = asString(req.query && req.query.action);
+
+        // The Solar Super Hero certificate page and its downloads. No token:
+        // keyed by the number printed on the certificate.
+        if (action === 'hero' || action === 'hero-file') {
+            try {
+                if (await handleHero(req, res, action)) return undefined;
+            } catch (error) {
+                functions.logger.error('hero page failed', error);
+                return action === 'hero'
+                    ? sendHtml(res, 500, renderUnavailablePage({ reason: 'error', logoUrl: LOGO_URL }))
+                    : sendJson(res, 500, { status: 'error' });
+            }
+        }
 
         // Installer customer lookup — no `?t=`, authenticated by the
         // installer's ID token. Hosted here for want of a deployable function

@@ -33,11 +33,11 @@ const {
     heroVerifyUrl,
     REGISTRATIONS_COLLECTION,
 } = require('./config');
+const { LAYOUTS, renderLayoutHtml } = require('./hero-layouts');
 const { totalCapacityKw, impactFor } = require('./hero-impact');
 const { formatNumber, issueYear, allocateSequence } = require('./hero-number');
 const { buildQrSvg } = require('./hero-qr');
-const { renderHeroCertificateHtml } = require('./hero-certificate');
-const { renderCertificate } = require('./hero-render');
+const { renderLayout } = require('./hero-render');
 
 const str = (v) => (typeof v === 'string' ? v.trim() : '');
 
@@ -172,13 +172,37 @@ function bucket() {
     return HERO_BUCKET ? admin.storage().bucket(HERO_BUCKET) : admin.storage().bucket();
 }
 
-/** `hero-certificates/<uid>/<number>.png` — stable for the life of the certificate. */
-function storagePath(uid, certificateNumber, ext) {
-    return `${HERO_STORAGE_PREFIX}/${uid}/${certificateNumber}.${ext}`;
+/**
+ * `hero-certificates/<uid>/<number>.png` — stable for the life of the certificate.
+ *
+ * The landscape files keep the bare name they have always had; the other
+ * layouts take a suffix (`<number>-portrait.pdf`, `<number>-story.png`), so
+ * nothing that already reads `pngPath`/`pdfPath` sees a different file.
+ */
+function storagePath(uid, certificateNumber, ext, variant = '') {
+    const suffix = variant && variant !== 'landscape' ? `-${variant}` : '';
+    return `${HERO_STORAGE_PREFIX}/${uid}/${certificateNumber}${suffix}.${ext}`;
 }
 
 /**
- * Renders the certificate and uploads both files.
+ * The files one issue produces, keyed by the field name hero-flow.js stores
+ * them under. Landscape keeps the original two names; the rest are additive.
+ */
+const FILES = [
+    { field: 'pngPath', bytesField: 'pngBytes', layout: 'landscape', ext: 'png' },
+    { field: 'pdfPath', bytesField: 'pdfBytes', layout: 'landscape', ext: 'pdf' },
+    { field: 'portraitPngPath', bytesField: 'portraitPngBytes', layout: 'portrait', ext: 'png' },
+    { field: 'portraitPdfPath', bytesField: 'portraitPdfBytes', layout: 'portrait', ext: 'pdf' },
+    { field: 'storyPngPath', bytesField: 'storyPngBytes', layout: 'story', ext: 'png' },
+];
+
+/**
+ * Renders every layout of the certificate and uploads the files.
+ *
+ * Three layouts, five files: landscape PNG + PDF (the artwork, what the email
+ * attaches), portrait PNG + PDF (to frame), and the 1080×1920 story PNG (to
+ * post). All from the same values in the same pass, so a customer can never
+ * hold a portrait copy whose figures differ from their landscape one.
  *
  * The date PRINTED on it is the ORIGINAL issue date, even on a reissue: the
  * customer became a Solar Super Hero the day they first went solar, not the day
@@ -190,7 +214,7 @@ async function render(certificate) {
     const verifyUrl = heroVerifyUrl(certificateNumber);
     const issuedMillis = millisOf(certificate.issuedAt);
 
-    const html = renderHeroCertificateHtml({
+    const values = {
         customerName,
         issuedAt: issuedMillis ? new Date(issuedMillis) : new Date(),
         co2Tonnes,
@@ -200,12 +224,16 @@ async function render(certificate) {
         qrSvg: verifyUrl ? await buildQrSvg(verifyUrl) : '',
         signatoryName: HERO_SIGNATORY_NAME,
         signatoryDesignation: HERO_SIGNATORY_DESIGNATION,
-    });
+    };
 
-    const { png, pdf } = await renderCertificate(html);
+    // One Chrome page per layout, sequentially: the browser is shared and a
+    // 1 GiB function does not want three pages of embedded fonts open at once.
+    const rendered = {};
+    for (const layout of Object.keys(LAYOUTS)) {
+        rendered[layout] = await renderLayout(renderLayoutHtml(layout, values), LAYOUTS[layout]);
+    }
+
     const b = bucket();
-    const pngPath = storagePath(uid, certificateNumber, 'png');
-    const pdfPath = storagePath(uid, certificateNumber, 'pdf');
 
     // The object path deliberately does not change between versions, so a
     // customer's certificate keeps one address for its whole life. `version` in
@@ -221,12 +249,19 @@ async function render(certificate) {
         },
     });
 
-    await Promise.all([
-        b.file(pngPath).save(png, options('image/png')),
-        b.file(pdfPath).save(pdf, options('application/pdf')),
-    ]);
+    const result = {};
+    await Promise.all(
+        FILES.map(async ({ field, bytesField, layout, ext }) => {
+            const bytes = rendered[layout][ext];
+            if (!bytes) return;
+            const objectPath = storagePath(uid, certificateNumber, ext, layout);
+            await b.file(objectPath).save(bytes, options(ext === 'pdf' ? 'application/pdf' : 'image/png'));
+            result[field] = objectPath;
+            result[bytesField] = bytes.length;
+        }),
+    );
 
-    return { pngPath, pdfPath, pngBytes: png.length, pdfBytes: pdf.length };
+    return result;
 }
 
 /**
@@ -255,5 +290,6 @@ module.exports = {
     render,
     signedUrl,
     storagePath,
+    FILES,
     bucket,
 };

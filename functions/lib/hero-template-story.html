@@ -1,0 +1,79 @@
+<!doctype html>
+<!--
+  Feston SEV - Solar Super Hero, SOCIAL STORY layout (1080 x 1920).
+  The post the proposal promised: phone-shaped, for Instagram / WhatsApp
+  status. Brand assets are borrowed from the designer's landscape file through
+  the markers wrapped in double curly braces with a leading @ sign (see
+  lib/hero-layouts.js). PNG only - nobody prints a story.
+  No signature block: this is a share image, not the document. The verify line
+  stays optional, as on the certificate itself.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=1080">
+  <title>Feston SEV - Solar Super Hero</title>
+  <style>
+    {{@fonts}}
+    html, body { margin: 0; padding: 0; background: #FBF8F1; }
+    body { width: 1080px; height: 1920px; overflow: hidden; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .art svg { display: block; width: 100%; height: 100%; }
+    .f { font-family: 'Exo 2', 'Segoe UI', Helvetica, Arial, sans-serif; }
+  </style>
+</head>
+<body>
+<div style="position: relative; width: 1080px; height: 1920px; overflow: hidden; background: #FBF8F1; color: #1D2A3A; font-family: 'Exo 2', 'Segoe UI', Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased;">
+
+  <div class="art" style="position: absolute; left: 240px; top: -520px; width: 1500px; height: 1500px; pointer-events: none;">{{@rose}}</div>
+
+  <div style="position: absolute; left: 0; top: 0; right: 0; height: 14px; background: linear-gradient(90deg, #0A66B3, #045CA4 50%, #034F8E);"></div>
+  <div style="position: absolute; left: 36px; top: 50px; right: 36px; bottom: 36px; border: 2px solid #045CA4; pointer-events: none;"></div>
+  <div style="position: absolute; left: 46px; top: 60px; right: 46px; bottom: 46px; border: 1px solid rgba(4, 92, 164, 0.45); pointer-events: none;"></div>
+
+  <div style="position: absolute; left: 90px; right: 90px; top: 130px; display: flex; flex-direction: column; align-items: center; text-align: center;">
+    <img src="{{@logo}}" alt="Feston SEV" style="display: block; width: 300px; height: auto; margin-bottom: 56px;">
+
+    <div class="f" style="font-size: 22px; font-weight: 600; letter-spacing: 0.3em; text-transform: uppercase; color: #045CA4;">Certificate of recognition</div>
+    <div style="width: 90px; height: 3px; background: #E8862A; margin: 18px 0 44px;"></div>
+
+    <div style="position: relative; width: 330px; height: 330px; margin-bottom: 56px; filter: drop-shadow(0px 14px 22px rgba(29, 42, 58, 0.18));">
+      <svg viewBox="0 0 172 172" width="330" height="330" xmlns="http://www.w3.org/2000/svg" style="display: block;">
+        <defs><path id="storySealRing" d="M 86 20 A 66 66 0 1 1 85.99 20"></path></defs>
+        <circle cx="86" cy="86" r="84" fill="#045CA4"></circle>
+        <circle cx="86" cy="86" r="76" fill="#FBF8F1"></circle>
+        <circle cx="86" cy="86" r="76" fill="none" stroke="#E8862A" stroke-width="2"></circle>
+        <text font-family="'Exo 2', 'Segoe UI', Helvetica, Arial, sans-serif" font-size="9.5" font-weight="600" fill="#045CA4" letter-spacing="2">
+          <textPath href="#storySealRing" textLength="412" lengthAdjust="spacing">FESTON SEV &#183; SOLAR SUPER HERO &#183; ALWAYS ON &#183;</textPath>
+        </text>
+      </svg>
+      <img src="{{@emblem}}" alt="Feston emblem" style="position: absolute; left: 19.77%; top: 19.77%; width: 60.47%; height: 60.47%; display: block;">
+    </div>
+
+    <div class="f" style="font-size: 20px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; color: #5B6673; margin-bottom: 22px;">Issued on {{issue_date}}</div>
+    <div id="customer-name" data-field="customer_name" style="font-family: 'Poppins', 'Segoe UI', Helvetica, Arial, sans-serif; font-size: 72px; line-height: 1.12; font-weight: 700; color: #1D2A3A; margin-bottom: 18px; max-width: 900px; text-wrap: balance;">{{customer_name}}</div>
+    <div class="f" style="font-size: 28px; color: #5B6673; margin-bottom: 10px;">is hereby recognised as a</div>
+    <div class="f" style="font-size: 66px; line-height: 1.1; font-weight: 700; color: #045CA4; margin-bottom: 36px;">Solar Super Hero</div>
+    <div class="f" style="font-size: 28px; line-height: 1.45; color: #1D2A3A; max-width: 760px; margin-bottom: 44px; text-wrap: pretty;">for choosing clean, reliable solar power from Feston SEV and helping build a greener tomorrow.</div>
+
+    <div style="display: flex; flex-direction: row; align-items: flex-start; gap: 22px; max-width: 840px; padding: 30px 28px; border-top: 2px solid rgba(232, 134, 42, 0.55); border-bottom: 2px solid rgba(232, 134, 42, 0.55); text-align: left;">
+      <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="#E8862A" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex: 0 0 auto; margin-top: 2px;"><circle cx="12" cy="12" r="4"></circle><line x1="12" y1="2" x2="12" y2="4.5"></line><line x1="12" y1="19.5" x2="12" y2="22"></line><line x1="2" y1="12" x2="4.5" y2="12"></line><line x1="19.5" y1="12" x2="22" y2="12"></line><line x1="4.9" y1="4.9" x2="6.7" y2="6.7"></line><line x1="17.3" y1="17.3" x2="19.1" y2="19.1"></line><line x1="4.9" y1="19.1" x2="6.7" y2="17.3"></line><line x1="17.3" y1="6.7" x2="19.1" y2="4.9"></line></svg>
+      <div class="f" style="font-size: 30px; line-height: 1.45; color: #1D2A3A; text-wrap: pretty;">This rooftop solar system offsets an estimated <strong style="font-weight: 600; color: #045CA4;">{{co2_tonnes}} tonnes of CO&#8322;</strong> every year, the same as planting about <strong style="font-weight: 600; color: #045CA4;">{{trees}} trees</strong>.</div>
+    </div>
+  </div>
+
+  <div style="position: absolute; left: 90px; right: 90px; bottom: 100px; display: flex; flex-direction: row; align-items: flex-end; justify-content: space-between; gap: 30px;">
+    <div style="display: flex; flex-direction: column; align-items: flex-start; text-align: left; gap: 8px;">
+      <div class="f" style="font-size: 26px; font-weight: 700; color: #E8862A; letter-spacing: 0.02em; margin-bottom: 6px;">#SolarSuperHero &#183; #FestonSEV</div>
+      <div class="f" style="font-size: 22px; font-weight: 600; color: #1D2A3A; letter-spacing: 0.04em;">Certificate No. {{certificate_number}}</div>
+      <!--#verify--><div class="f" style="font-size: 20px; color: #045CA4;">Verify at {{verify_label}}</div><!--/#verify-->
+      <div class="f" style="font-size: 18px; line-height: 1.4; color: #5B6673; max-width: 560px; text-wrap: pretty;">Feston SEV confirms this customer has gone solar with a genuine Feston system.</div>
+    </div>
+    <!--#qr--><div style="display: flex; flex-direction: column; align-items: center; gap: 8px;">
+      <div style="width: 150px; height: 150px; padding: 10px; background: #FFFFFF; border: 1px solid rgba(29, 42, 58, 0.18); box-sizing: border-box;">{{qr_svg}}</div>
+      <div class="f" style="font-size: 15px; letter-spacing: 0.08em; text-transform: uppercase; color: #5B6673;">Scan to visit</div>
+    </div><!--/#qr-->
+  </div>
+
+</div>
+</body>
+</html>

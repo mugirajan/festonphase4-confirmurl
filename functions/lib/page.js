@@ -553,6 +553,10 @@ const UNAVAILABLE_COPY = {
         title: 'Link not found',
         text: 'This confirmation link is not valid. Check that you opened the most recent link, or ask for a new one from the Feston app.',
     },
+    'no-certificate': {
+        title: 'Certificate not found',
+        text: 'No Solar Super Hero certificate matches this number. Check the number printed on the certificate and try again.',
+    },
 };
 
 function renderUnavailablePage({ reason, logoUrl }) {
@@ -572,4 +576,5 @@ module.exports = {
     renderConfirmedPage,
     renderUnavailablePage,
     renderSections,
+    shell,
 };

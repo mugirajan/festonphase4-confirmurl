@@ -91,7 +91,11 @@ async function closeBrowser() {
 }
 
 /**
- * Renders certificate HTML to `{ png, pdf }` Buffers.
+ * Renders one layout of the certificate.
+ *
+ * `{ width, height, scale, pdf }` is the geometry from hero-layouts.js. Returns
+ * `{ png, pdf }`, with `pdf` null for a layout that is never printed (the
+ * social story). One navigation per layout; every layout is its own page.
  *
  * `setContent` with `waitUntil: 'load'` is enough because the page has no
  * network dependencies at all — every font and image is a data URI. The
@@ -99,35 +103,47 @@ async function closeBrowser() {
  * Chrome will happily screenshot the page with fallback metrics and the
  * customer's name comes out in Segoe UI.
  */
-async function renderCertificate(html) {
+async function renderLayout(html, { width, height, scale = SCALE, pdf: wantPdf = true } = {}) {
     const browser = await getBrowser();
     const page = await browser.newPage();
     try {
         await page.setViewport({
-            width: PAGE_WIDTH,
-            height: PAGE_HEIGHT,
-            deviceScaleFactor: SCALE,
+            width,
+            height,
+            deviceScaleFactor: scale,
         });
         await page.setContent(html, { waitUntil: 'load' });
         await page.evaluate(() => document.fonts.ready);
 
         const png = await page.screenshot({
             type: 'png',
-            clip: { x: 0, y: 0, width: PAGE_WIDTH, height: PAGE_HEIGHT },
+            clip: { x: 0, y: 0, width, height },
         });
 
-        const pdf = await page.pdf({
-            width: `${PAGE_WIDTH}px`,
-            height: `${PAGE_HEIGHT}px`,
-            printBackground: true,
-            pageRanges: '1',
-            margin: { top: '0', right: '0', bottom: '0', left: '0' },
-        });
+        let pdf = null;
+        if (wantPdf) {
+            const bytes = await page.pdf({
+                width: `${width}px`,
+                height: `${height}px`,
+                printBackground: true,
+                pageRanges: '1',
+                margin: { top: '0', right: '0', bottom: '0', left: '0' },
+            });
+            pdf = Buffer.from(bytes);
+        }
 
-        return { png: Buffer.from(png), pdf: Buffer.from(pdf) };
+        return { png: Buffer.from(png), pdf };
     } finally {
         await page.close().catch(() => {});
     }
+}
+
+/**
+ * The landscape certificate — `{ png, pdf }` at the artwork's own size.
+ * Kept as the name the rest of the code and the preview script call.
+ */
+async function renderCertificate(html) {
+    return renderLayout(html, { width: PAGE_WIDTH, height: PAGE_HEIGHT, scale: SCALE, pdf: true });
 }
 
 module.exports = {
@@ -137,5 +153,6 @@ module.exports = {
     LAUNCH_ARGS,
     getBrowser,
     closeBrowser,
+    renderLayout,
     renderCertificate,
 };

@@ -69,7 +69,7 @@ function subjectFor({ customerName, isReissue }) {
 }
 
 /** The plain-text alternative. Some people read mail this way; most filters do. */
-function textFor({ customerName, certificateNumber, co2Tonnes, trees, isReissue }) {
+function textFor({ customerName, certificateNumber, co2Tonnes, trees, isReissue, pageUrl }) {
     const who = firstName(customerName);
     const opening = isReissue
         ? 'Your Solar Super Hero certificate has been updated to include your latest Feston system.'
@@ -85,13 +85,16 @@ function textFor({ customerName, certificateNumber, co2Tonnes, trees, isReissue 
         `Certificate number: ${certificateNumber}`,
         '',
         'The certificate is attached as an image you can share and a PDF you can print.',
+        ...(pageUrl
+            ? ['A portrait copy and a 1080x1920 image for Instagram or WhatsApp status are here:', pageUrl]
+            : []),
         'You can also find it any time in the Feston app, under your profile.',
         '',
         'Feston S.E.V Pvt. Ltd.',
     ].join('\n');
 }
 
-function htmlFor({ customerName, certificateNumber, co2Tonnes, trees, isReissue }) {
+function htmlFor({ customerName, certificateNumber, co2Tonnes, trees, isReissue, pageUrl }) {
     const who = escapeHtml(firstName(customerName));
     const opening = isReissue
         ? 'Your Solar Super Hero certificate has been updated to include your latest Feston system.'
@@ -119,7 +122,11 @@ function htmlFor({ customerName, certificateNumber, co2Tonnes, trees, isReissue 
     <p style="font-size:15px;line-height:1.5;margin:0 0 20px;">
       Your certificate is attached &mdash; a picture you can share, and a PDF you can print.
       You will also find it any time in the Feston app, under your profile.
-    </p>
+    </p>${pageUrl ? `
+    <p style="font-size:15px;line-height:1.5;margin:0 0 20px;">
+      Want a portrait copy to frame, or a story-sized image for Instagram or WhatsApp status?
+      <a href="${escapeHtml(pageUrl)}" style="color:${BRAND};font-weight:600;">View and download your certificate online</a>.
+    </p>` : ''}
     <p style="font-size:13px;line-height:1.5;color:${MUTED};margin:0 0 4px;">
       Certificate No. ${escapeHtml(certificateNumber)}
     </p>
@@ -148,11 +155,12 @@ function buildMailDocument({
     isReissue = false,
     pngUrl,
     pdfUrl,
+    pageUrl = '',
 }) {
     const recipient = String(to || '').trim();
     if (!recipient) throw new Error('hero mail: a recipient address is required');
 
-    const facts = { customerName, certificateNumber, co2Tonnes, trees, isReissue };
+    const facts = { customerName, certificateNumber, co2Tonnes, trees, isReissue, pageUrl };
     const attachments = [];
     if (pngUrl) {
         attachments.push({ filename: `${certificateNumber}.png`, path: pngUrl });

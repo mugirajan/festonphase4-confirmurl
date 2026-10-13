@@ -140,6 +140,21 @@ function heroVerifyUrl(certificateNumber) {
     return HERO_VERIFY_URL_TEMPLATE.replace('{n}', encodeURIComponent(certificateNumber));
 }
 
+/**
+ * The certificate's own web page: `confirm?action=hero&n=<number>`.
+ *
+ * Served by the same function as the confirm page (index.js, lib/hero-page.js),
+ * so it exists wherever the confirm page does, with no hosting change. Shows
+ * the certificate and offers every rendered file for download. This is also
+ * the natural value for HERO_VERIFY_URL_TEMPLATE —
+ * `<PUBLIC_BASE_URL>?action=hero&n={n}` — once Feston are happy for the QR to
+ * point at it; a short hosting rewrite (`/verify` → this function) would make
+ * the printed line read `festonsev.com/verify` as the artwork intends.
+ */
+function heroPageUrl(certificateNumber) {
+    return `${PUBLIC_BASE_URL}?action=hero&n=${encodeURIComponent(certificateNumber)}`;
+}
+
 /** Collection the Firebase "Trigger Email" extension watches. */
 const MAIL_COLLECTION = process.env.MAIL_COLLECTION || 'mail';
 
@@ -171,6 +186,7 @@ module.exports = {
     HERO_SIGNATORY_DESIGNATION,
     HERO_VERIFY_URL_TEMPLATE,
     heroVerifyUrl,
+    heroPageUrl,
     MAIL_COLLECTION,
     HERO_MAIL_FROM,
     HERO_ENABLED,

@@ -19,7 +19,7 @@
  */
 
 const admin = require('firebase-admin');
-const { HERO_COLLECTION, HERO_EMAIL_ENABLED, MAIL_COLLECTION } = require('./config');
+const { HERO_COLLECTION, HERO_EMAIL_ENABLED, MAIL_COLLECTION, heroPageUrl } = require('./config');
 const { loadRegistrations, plan, render, signedUrl, millisOf } = require('./hero-issue');
 const { buildMailDocument } = require('./hero-mail');
 const mailer = require('./mailer');
@@ -70,10 +70,12 @@ async function issueForUser(uid, { logger = console } = {}) {
     await ref.set(
         {
             status: 'ready',
-            pngPath: files.pngPath,
-            pdfPath: files.pdfPath,
-            pngBytes: files.pngBytes,
-            pdfBytes: files.pdfBytes,
+            // Every rendered file: pngPath/pdfPath (landscape), portraitPngPath,
+            // portraitPdfPath, storyPngPath and their byte counts.
+            ...files,
+            // The certificate's own web page, where all of those can be viewed
+            // and downloaded without the app.
+            pageUrl: heroPageUrl(certificate.certificateNumber),
             renderError: admin.firestore.FieldValue.delete(),
             renderedAt: admin.firestore.FieldValue.serverTimestamp(),
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -127,6 +129,7 @@ async function queueEmail(firestore, certificate, files, action, logger) {
                 isReissue: action === 'update',
                 pngUrl,
                 pdfUrl,
+                pageUrl: heroPageUrl(certificate.certificateNumber),
             }),
             // Ours, not the extension's. Lets a support query answer "was this
             // customer sent their certificate, and which version".
