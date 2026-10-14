@@ -8,3 +8,7 @@ preview/
 
 # Puppeteer-managed Chromium, pinned here by functions/puppeteer.config.cjs so it deploys with the function. Hundreds of MB; never commit.
 functions/.cache/
+
+# Service-account keys for scripts/local-live.js. Never commit one.
+*service-account*.json
+feston-prod*.json

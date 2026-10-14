@@ -12,7 +12,8 @@
         "preview": "node scripts/preview.js",
         "serve": "firebase emulators:start --only functions",
         "logs": "firebase functions:log",
-        "gcp-build": "node node_modules/puppeteer/install.mjs"
+        "gcp-build": "node node_modules/puppeteer/install.mjs",
+        "live": "node scripts/local-live.js"
     },
     "dependencies": {
         "cors": "^2.8.5",
