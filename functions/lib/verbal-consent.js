@@ -96,6 +96,8 @@ async function recordVerbalConsent({ firestore, verifyIdToken, authorization, bo
         acknowledgements: {
             acceptedTerms: true,
             acceptedDataForTraining: true,
+            // Asked separately on the call; optional, as on the confirm page.
+            acceptedMarketing: b.marketingConsent === true,
             consentMethod: 'verbal',
             consentRecordedBy: staff.uid,
             consentRecordedByName: staff.name,

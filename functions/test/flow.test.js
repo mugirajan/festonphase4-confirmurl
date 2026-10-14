@@ -882,3 +882,41 @@ test('an unpriced family is priced by the `other` catch-all', async () => {
 
     assert.equal(baseRows()[0].points, 20, '20 kW x the catch-all 1');
 });
+
+// --- marketing opt-in (2026-10-14) -------------------------------------------
+
+test('marketing consent is optional: confirming without it still registers, recorded as false', async () => {
+    seedPending({ gpsLat: 1, gpsLng: 1 });
+    const res = await call({ method: 'POST', query: { t: TOKEN }, body: { acceptedTerms: true, acceptedDataForTraining: true } });
+    assert.equal(res.body.status, 'completed');
+    const row = registrations()[0];
+    assert.equal(row.marketingConsent, false);
+    assert.equal(row.marketingConsentAt, undefined);
+});
+
+test('a ticked marketing box is recorded as true with the time it was given', async () => {
+    seedPending({ gpsLat: 1, gpsLng: 1 });
+    const res = await call({ method: 'POST', query: { t: TOKEN }, body: { acceptedTerms: true, acceptedDataForTraining: true, acceptedMarketing: true } });
+    assert.equal(res.body.status, 'completed');
+    const row = registrations()[0];
+    assert.equal(row.marketingConsent, true);
+    assert.ok(row.marketingConsentAt, 'marketingConsentAt is set');
+});
+
+test('anything but a literal true is not marketing consent', async () => {
+    seedPending({ gpsLat: 1, gpsLng: 1 });
+    await call({ method: 'POST', query: { t: TOKEN }, body: { acceptedTerms: true, acceptedDataForTraining: true, acceptedMarketing: 'yes' } });
+    assert.equal(registrations()[0].marketingConsent, false);
+});
+
+test('verbal consent carries the marketing answer support recorded', async () => {
+    seedPending({ gpsLat: 1, gpsLng: 1 });
+    const store = require('../lib/store');
+    await store.completeRegistration(TOKEN, {
+        userAgent: 'portal', verifiedPhone: '', requirePhoneMatch: false, ignoreExpiry: true,
+        acknowledgements: { acceptedTerms: true, acceptedDataForTraining: true, acceptedMarketing: true, consentMethod: 'verbal', consentNote: 'yes to both' },
+    });
+    const row = registrations()[0];
+    assert.equal(row.consentMethod, 'verbal');
+    assert.equal(row.marketingConsent, true);
+});

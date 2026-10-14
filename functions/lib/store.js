@@ -64,8 +64,14 @@ function last10(value) {
  * acknowledgements (terms, data-for-training) and, when OTP is on, the phone
  * that was verified. Stored on the registration as a record of what was agreed.
  */
-function consentFields(acknowledgements = {}, verifiedPhone) {
+function consentFields(acknowledgements = {}, verifiedPhone, at) {
     const out = {};
+    // Marketing opt-in (2026-10-14). Always written, true or false, so a reader
+    // can tell "asked and said no" from a registration made before the question
+    // existed (field absent). Only marketingConsent === true may appear in a
+    // marketing export.
+    out.marketingConsent = acknowledgements.acceptedMarketing === true;
+    if (out.marketingConsent && at) out.marketingConsentAt = at;
     if (acknowledgements.acceptedTerms) out.acceptedTerms = true;
     if (acknowledgements.acceptedDataForTraining) {
         out.acceptedDataForTraining = true;
@@ -500,7 +506,7 @@ async function completeRegistration(token, { userAgent, verifiedPhone, requirePh
             capacityKw,
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
             ...confirmationMarkers(confirmedAt),
-            ...consentFields(acknowledgements, verifiedPhone),
+            ...consentFields(acknowledgements, verifiedPhone, confirmedAt),
             // Fraud signals, when any fired. The registration still goes
             // through — the customer did nothing wrong — and an OTP audit is
             // queued below; a failed audit is what claws the points back.

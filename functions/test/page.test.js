@@ -173,3 +173,12 @@ test('the embedded faces cover every weight the stylesheet asks for', () => {
         assert.ok(declared.has(`Exo 2 ${weight[1]}`), `no Exo 2 ${weight[1]} face`);
     }
 });
+
+test('the confirm page offers an optional marketing box that does not gate the button', () => {
+    const html = pending();
+    assert.ok(html.includes('id="ack-marketing"'), 'marketing checkbox present');
+    assert.ok(html.includes('<em>Optional</em>'), 'labelled optional');
+    // The button is gated on the two required boxes only.
+    assert.ok(html.includes('function bothChecked() { return !!(ackTerms.checked && ackData.checked); }'));
+    assert.ok(html.includes('acceptedMarketing: !!(ackMarketing && ackMarketing.checked)'));
+});

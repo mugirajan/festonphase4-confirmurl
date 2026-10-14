@@ -165,6 +165,8 @@ function styles() {
     .ack { display: flex; gap: 10px; align-items: flex-start; font-size: 13px; line-height: 1.5; color: #374151; cursor: pointer; }
     .ack input { margin: 2px 0 0; width: 18px; height: 18px; flex: 0 0 auto; accent-color: ${BRAND_BLUE}; }
     .ack a { color: ${BRAND_BLUE}; font-weight: 500; }
+    .ack-optional { padding-top: 12px; border-top: 1px dashed #e5e7eb; color: #4b5563; }
+    .ack-optional em { font-style: normal; font-weight: 600; color: #6b7280; }
     .otp-input {
       width: 100%; text-align: center; letter-spacing: 8px; font-size: 22px;
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -304,8 +306,8 @@ function renderPendingPage({ details, expiresAt, actionUrl, token, logoUrl, otpE
     const body = `
 <h1>Confirm your registration</h1>
 <div class="rule"></div>
-<p class="lede">Your installer has filled these in for you. Check they are right, tick both
-boxes, and confirm — your warranty starts the moment you do.</p>
+<p class="lede">Your installer has filled these in for you. Check they are right, tick the
+two required boxes, and confirm — your warranty starts the moment you do.</p>
 
 <div class="notice notice-amber" id="expiry-notice">
   This link expires in <strong id="countdown">${escapeHtml(humaniseSeconds(remaining))}</strong>.
@@ -324,6 +326,10 @@ ${renderSections(details)}
     <label class="ack">
       <input type="checkbox" id="ack-data" />
       <span>I agree that Feston may use my registration and product data to improve and train its products and services.</span>
+    </label>
+    <label class="ack ack-optional">
+      <input type="checkbox" id="ack-marketing" />
+      <span>Send me offers, product updates and service reminders from Feston on WhatsApp, SMS and email. <em>Optional</em> — your warranty is the same either way, and you can ask us to stop at any time.</span>
     </label>
   </div>
   <button class="primary" id="confirm-btn" type="button" disabled>${primaryLabel}</button>
@@ -398,7 +404,7 @@ ${renderSections(details)}
 const PAGE_RUNTIME = `
 (function () {
   var $ = function (id) { return document.getElementById(id); };
-  var ackTerms = $('ack-terms'), ackData = $('ack-data');
+  var ackTerms = $('ack-terms'), ackData = $('ack-data'), ackMarketing = $('ack-marketing');
   var btn = $('confirm-btn'), errorText = $('error-text'), countdown = $('countdown');
   var actionArea = $('action-area'), detailsCard = $('details-card'), expiryNotice = $('expiry-notice');
   var doneArea = $('done-area'), lapsedArea = $('lapsed-area');
@@ -434,7 +440,8 @@ const PAGE_RUNTIME = `
 
   function fail(el, msg) { el.textContent = msg; el.hidden = false; }
   function register(idToken) {
-    var payload = { token: token, acceptedTerms: true, acceptedDataForTraining: true };
+    // Marketing consent is OPTIONAL and separate (DPDP): read as ticked or not, never required.
+    var payload = { token: token, acceptedTerms: true, acceptedDataForTraining: true, acceptedMarketing: !!(ackMarketing && ackMarketing.checked) };
     if (idToken) payload.idToken = idToken;
     // POST to THIS page's own URL (same-origin; the token is already in ?t=).
     // Using the current URL rather than the absolute link base avoids a

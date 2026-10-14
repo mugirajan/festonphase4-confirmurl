@@ -272,6 +272,9 @@ async function handleConfirm(req, res, token) {
     const acknowledgements = {
         acceptedTerms: body.acceptedTerms === true,
         acceptedDataForTraining: body.acceptedDataForTraining === true,
+        // Optional and separate from the two above: marketing consent can never
+        // be a condition of the warranty (DPDP Act), so it is recorded, not checked.
+        acceptedMarketing: body.acceptedMarketing === true,
     };
     if (!acknowledgements.acceptedTerms || !acknowledgements.acceptedDataForTraining) {
         return sendJson(res, 400, {
