@@ -187,6 +187,12 @@ function watchRegistrations() {
                 for (const change of snap.docChanges()) {
                     if (change.type !== 'added' || seen.has(change.doc.id)) continue;
                     seen.add(change.doc.id);
+                    // Firestore orders a STRING after every Timestamp, so older
+                    // rows whose createdAt was saved as text also match the
+                    // query. Only a real Timestamp from after start counts —
+                    // never issue a certificate for an old, real customer.
+                    const created = change.doc.get('createdAt');
+                    if (!(created instanceof admin.firestore.Timestamp) || created.toMillis() <= startedAt.toMillis()) continue;
                     void issueHero(change.doc.id, change.doc.data());
                 }
             },
