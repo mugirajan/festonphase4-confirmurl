@@ -244,7 +244,9 @@ async function render(certificate) {
         resumable: false,
         contentType,
         metadata: {
-            cacheControl: 'private, max-age=0, must-revalidate',
+            // no-transform: nothing between the bucket and the phone may
+            // re-encode the file; a gzipped response breaks the app's download.
+            cacheControl: 'private, max-age=0, must-revalidate, no-transform',
             metadata: meta,
         },
     });
