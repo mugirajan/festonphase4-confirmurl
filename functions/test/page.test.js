@@ -182,3 +182,10 @@ test('the confirm page offers an optional marketing box that does not gate the b
     assert.ok(html.includes('function bothChecked() { return !!(ackTerms.checked && ackData.checked); }'));
     assert.ok(html.includes('acceptedMarketing: !!(ackMarketing && ackMarketing.checked)'));
 });
+
+test('the marketing box arrives ticked only when the customer said yes in the app', () => {
+    const { renderPendingPage } = require('../lib/page');
+    const base = { details: DETAILS, expiresAt: { toMillis: () => Date.now() + 3600e3 }, actionUrl: 'x', token: 't', otpEnabled: false };
+    assert.ok(renderPendingPage({ ...base, marketingPreset: true }).includes('id="ack-marketing" checked'));
+    assert.ok(!renderPendingPage(base).includes('id="ack-marketing" checked'));
+});

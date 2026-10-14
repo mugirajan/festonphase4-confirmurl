@@ -294,7 +294,7 @@ function maskPhone(e164) {
  * OTP off it posts straight away. The countdown is a courtesy — the real expiry
  * is re-checked on the server when the request lands.
  */
-function renderPendingPage({ details, expiresAt, actionUrl, token, logoUrl, otpEnabled, otpTestMode, phoneE164, firebaseConfig }) {
+function renderPendingPage({ details, expiresAt, actionUrl, token, logoUrl, otpEnabled, otpTestMode, phoneE164, firebaseConfig, marketingPreset = false }) {
     const remaining = secondsRemaining(expiresAt);
     const otp = !!otpEnabled && !!phoneE164;
     const masked = maskPhone(phoneE164);
@@ -328,7 +328,7 @@ ${renderSections(details)}
       <span>I agree that Feston may use my registration and product data to improve and train its products and services.</span>
     </label>
     <label class="ack ack-optional">
-      <input type="checkbox" id="ack-marketing" />
+      <input type="checkbox" id="ack-marketing"${marketingPreset ? ' checked' : ''} />
       <span>Send me offers, product updates and service reminders from Feston on WhatsApp, SMS and email. <em>Optional</em> — your warranty is the same either way, and you can ask us to stop at any time.</span>
     </label>
   </div>

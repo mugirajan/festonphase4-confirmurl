@@ -252,6 +252,10 @@ async function handlePage(res, token) {
             otpTestMode: OTP_TEST_MODE,
             phoneE164,
             firebaseConfig: FIREBASE_WEB_CONFIG,
+            // The customer already said yes in the app (their own registration
+            // only): the box arrives ticked. Still theirs to untick, and what is
+            // POSTed on confirm is what gets recorded.
+            marketingPreset: pending.marketingOptInRequested === true,
         }),
     );
 }
