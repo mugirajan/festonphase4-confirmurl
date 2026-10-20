@@ -145,7 +145,9 @@ test('every page asks not to be indexed', () => {
 
 test('the page is self-contained — no external scripts, styles or fonts', () => {
     const html = pending();
-    assert.ok(!/<link[^>]+href=/i.test(html));
+    // Only embedded (data:) links — the tab icon is one — never a fetched one.
+    assert.ok(!/<link[^>]+href="(?!data:)/i.test(html));
+    assert.ok(/<link rel="icon"[^>]+href="data:image\/png;base64,/i.test(html));
     assert.ok(!/<script[^>]+src=/i.test(html));
     // A subresource fetched from anywhere else is the thing this guards: the
     // page must render whole on a phone that has already lost its connection,

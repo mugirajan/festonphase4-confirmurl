@@ -45,6 +45,16 @@ const stamp = (millis) => ({
     toDate: () => new Date(millis),
 });
 
+/** `FieldValue.increment(n)` — applied against the stored value on write. */
+const INCREMENT = Symbol('increment');
+function applyWrite(existing, data) {
+    const out = { ...(existing || {}) };
+    for (const [k, v] of Object.entries(data)) {
+        out[k] = v && v[INCREMENT] !== undefined ? (Number(out[k]) || 0) + v[INCREMENT] : v;
+    }
+    return out;
+}
+
 function docRef(collection, id) {
     return {
         _collection: collection,
@@ -52,20 +62,46 @@ function docRef(collection, id) {
         id,
         async get() {
             const data = documents.get(key(collection, id));
-            return { exists: data !== undefined, data: () => data };
+            return { exists: data !== undefined, id, ref: this, data: () => data };
         },
         async set(data, options) {
             const existing = documents.get(key(collection, id));
-            documents.set(
-                key(collection, id),
-                options && options.merge && existing ? { ...existing, ...data } : data,
-            );
+            documents.set(key(collection, id), applyWrite(options && options.merge ? existing : undefined, data));
+        },
+    };
+}
+
+/**
+ * Equality-only queries, which is all the confirm path asks: the fraud
+ * checks' repeat-phone/address lookups, the installer-by-uid fallback and
+ * the customer lookup by phone/email.
+ */
+function queryRef(collection, filters = [], max = Infinity) {
+    return {
+        where: (field, op, value) => {
+            if (op !== '==') throw new Error(`dev-server: only == queries are supported (got ${op})`);
+            return queryRef(collection, [...filters, [field, value]], max);
+        },
+        limit: (n) => queryRef(collection, filters, n),
+        async get() {
+            const docs = [];
+            for (const [k, data] of documents.entries()) {
+                const [c, id] = k.split('/');
+                if (c !== collection) continue;
+                if (!filters.every(([f, v]) => data[f] === v)) continue;
+                docs.push({ id, exists: true, ref: docRef(collection, id), data: () => data });
+                if (docs.length >= max) break;
+            }
+            return { empty: docs.length === 0, size: docs.length, docs, forEach: (fn) => docs.forEach(fn) };
         },
     };
 }
 
 const firestoreApi = () => ({
-    collection: (name) => ({ doc: (id) => docRef(name, id === undefined ? nextAutoId() : id) }),
+    collection: (name) => ({
+        doc: (id) => docRef(name, id === undefined ? nextAutoId() : id),
+        ...queryRef(name),
+    }),
     async runTransaction(fn) {
         return fn({
             get: (ref) => ref.get(),
@@ -74,14 +110,17 @@ const firestoreApi = () => ({
                 if (existing === undefined) {
                     throw new Error(`No document to update: ${key(ref._collection, ref._id)}`);
                 }
-                documents.set(key(ref._collection, ref._id), { ...existing, ...data });
+                documents.set(key(ref._collection, ref._id), applyWrite(existing, data));
             },
             set: (ref, data, options) => ref.set(data, options),
         });
     },
 });
 firestoreApi.Timestamp = { fromMillis: stamp, now: () => stamp(Date.now()) };
-firestoreApi.FieldValue = { serverTimestamp: () => stamp(Date.now()) };
+firestoreApi.FieldValue = {
+    serverTimestamp: () => stamp(Date.now()),
+    increment: (n) => ({ [INCREMENT]: n }),
+};
 
 const originalLoad = Module._load;
 Module._load = function patchedLoad(request, ...rest) {
@@ -119,8 +158,26 @@ function mintLink() {
 
     documents.set(key('serial_num', SERIAL_DOC_ID), {
         serialnumber: '2505063529',
+        kilowatt: 5,
         registered: false,
     });
+
+    // The engineer who completes it, keyed the portal's way (auto-id with the
+    // uid in a field), their company, and a rate — so a confirm exercises the
+    // points, the company stamp and the install counts, not just the write.
+    if (!documents.has(key('installers', 'se_doc_muthu'))) {
+        documents.set(key('installers', 'se_doc_muthu'), {
+            uid: 'inst_demo_01',
+            name: 'Muthu Kumar',
+            phone: '+919876543210',
+            companyId: 'co_demo',
+            companyName: 'Rppl Solar Solutions',
+            lifetimeInstalls: 0,
+            points: 0,
+        });
+        documents.set(key('companies', 'co_demo'), { name: 'Rppl Solar Solutions', lifetimeInstalls: 0 });
+        documents.set(key('points_rates', 'hybrid'), { pointsPerKw: 50, active: true });
+    }
 
     documents.set(key('pending_registrations', token), {
         token,
@@ -133,6 +190,13 @@ function mintLink() {
         registeredByInstallerId: 'inst_demo_01',
         registeredByInstallerName: 'Muthu Kumar',
         registeredByInstallerPhone: '9876543210',
+        // A handed-off install ("Save & hand off"): started by one engineer,
+        // completed by another, as the app records it.
+        installTeam: [
+            { uid: 'inst_demo_02', name: 'Sai Meera', contact: '+918220286377', company: 'Rppl Solar Solutions', role: 'started', firstAt: new Date(Date.now() - 5 * 3600e3).toISOString(), lastAt: new Date(Date.now() - 5 * 3600e3).toISOString() },
+            { uid: 'inst_demo_01', name: 'Muthu Kumar', contact: '+919876543210', company: 'Rppl Solar Solutions', role: 'completed', firstAt: new Date().toISOString(), lastAt: new Date().toISOString() },
+        ],
+        installTeamUids: ['inst_demo_02', 'inst_demo_01'],
 
         serialnumber: '2505063529',
         productFamily: 'hybrid',

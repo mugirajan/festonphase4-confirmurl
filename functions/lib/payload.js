@@ -78,6 +78,10 @@ const ATTRIBUTION_FIELDS = [
     'registeredByInstallerId',
     'registeredByInstallerName',
     'registeredByInstallerPhone',
+    // Everyone who worked on the install when it was handed off between
+    // engineers; points still go only to `registeredByInstallerId`.
+    'installTeam',
+    'installTeamUids',
 ];
 
 /**

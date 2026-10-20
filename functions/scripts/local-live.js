@@ -6,12 +6,14 @@
  *
  *   npm run live                 OTP off: confirm with the two boxes only
  *   npm run live -- --otp        OTP on, with Firebase test numbers (code 123456)
+ *   npm run live -- --otp --real-otp   real SMS to real numbers; open the link as
+ *                                http://127.0.0.1:8080/... (not localhost)
  *   npm run live -- --port 8090
  *
  * What it does
  *   - Serves the real confirm handler (index.js) on
- *     http://localhost:8080/app/register/confirm. Open a customer link from the
- *     app with its host replaced by http://localhost:8080 and confirm it here:
+ *     http://127.0.0.1:8080/app/register/confirm. Open a customer link from the
+ *     app with its host replaced by http://127.0.0.1:8080 and confirm it here:
  *     the registration is written to feston-prod, the engineer's points are
  *     credited, and the fraud checks run — exactly what the deployed function
  *     will do.
@@ -47,10 +49,27 @@ const has = (name) => args.includes(`--${name}`);
 
 const PORT = Number(flag('port', 8080));
 const CONFIRM_PATH = '/app/register/confirm';
-const PROJECT_ID = 'feston-prod';
-const BUCKET = 'feston-prod.firebasestorage.app';
-
 const keyPath = process.env.GOOGLE_APPLICATION_CREDENTIALS || '';
+
+// The project is whichever one the key belongs to: feston-prod, or the
+// feston-test copy (2026-10-16), so one runner serves both.
+let PROJECT_ID = 'feston-prod';
+try {
+    PROJECT_ID = JSON.parse(fs.readFileSync(keyPath, 'utf8')).project_id || PROJECT_ID;
+} catch {
+    /* reported below */
+}
+const BUCKET = `${PROJECT_ID}.firebasestorage.app`;
+const IS_PROD = PROJECT_ID === 'feston-prod';
+
+// The confirm page signs the customer in for the OTP with this project's web
+// app, so the ID token it sends back is one this runner's project accepts.
+if (PROJECT_ID === 'feston-test') {
+    process.env.CONFIRM_FIREBASE_API_KEY = 'AIzaSyC8WpUZwf05TLVrirSwO_wtpHCrVjBIo9w';
+    process.env.CONFIRM_FIREBASE_AUTH_DOMAIN = 'feston-test.firebaseapp.com';
+    process.env.CONFIRM_FIREBASE_PROJECT_ID = 'feston-test';
+    process.env.CONFIRM_FIREBASE_APP_ID = '1:910738295581:web:45ec6d3ac93d795516eff4';
+}
 if (!keyPath || !fs.existsSync(keyPath)) {
     console.error('');
     console.error('  GOOGLE_APPLICATION_CREDENTIALS is not set, or the file does not exist.');
@@ -67,9 +86,17 @@ if (!keyPath || !fs.existsSync(keyPath)) {
 // never in functions/.env, which `firebase deploy` would ship to production.
 process.env.GCLOUD_PROJECT = PROJECT_ID;
 process.env.FIREBASE_CONFIG = JSON.stringify({ projectId: PROJECT_ID, storageBucket: BUCKET });
-process.env.CONFIRM_PUBLIC_BASE_URL = `http://localhost:${PORT}${CONFIRM_PATH}`;
+// --real-otp: real SMS to real numbers. reCAPTCHA has to run then, and Phone
+// Auth will not send from `localhost`, so the page is served as 127.0.0.1
+// (add 127.0.0.1 to the project's Authorized domains).
+const REAL_OTP = has('real-otp');
+// Always 127.0.0.1 (2026-10-20): chat apps turn http://127.0.0.1:8080/… into a
+// tappable link but leave http://localhost:8080/… as plain text, and the page
+// posts back to this same address, so app links and runner must agree.
+const HOST = '127.0.0.1';
+process.env.CONFIRM_PUBLIC_BASE_URL = `http://${HOST}:${PORT}${CONFIRM_PATH}`;
 process.env.CONFIRM_OTP_ENABLED = has('otp') ? 'true' : 'false';
-process.env.CONFIRM_OTP_TEST_MODE = has('otp') ? 'true' : 'false';
+process.env.CONFIRM_OTP_TEST_MODE = has('otp') && !REAL_OTP ? 'true' : 'false';
 process.env.HERO_EMAIL_ENABLED = 'false';
 
 // firebase-functions and cors only wrap the handler; everything else is real.
@@ -169,7 +196,7 @@ const server = http.createServer(async (nodeReq, nodeRes) => {
     }
 
     nodeRes.writeHead(404, { 'Content-Type': 'text/plain' });
-    nodeRes.end(`Not found. Open a customer link with its host replaced by http://localhost:${PORT}`);
+    nodeRes.end(`Not found. Open a customer link with its host replaced by http://${HOST}:${PORT}`);
 });
 
 // --- Hero certificate, in place of the cloud trigger -------------------------
@@ -218,16 +245,25 @@ async function issueHero(registrationId, data) {
 
 server.listen(PORT, () => {
     console.log('');
-    console.log('  Feston confirm — LOCAL runner against feston-prod');
+    console.log(`  Feston confirm — LOCAL runner against ${PROJECT_ID}`);
     console.log('  ────────────────────────────────────────────────');
-    console.log(`  Confirm page : http://localhost:${PORT}${CONFIRM_PATH}?t=<token>`);
-    console.log(`  OTP          : ${has('otp') ? 'ON (Firebase test numbers, code 123456)' : 'OFF (two boxes and Confirm)'}`);
-    console.log('  Database     : feston-prod (REAL) — points, registrations, certificates are real rows');
+    console.log(`  Confirm page : http://${HOST}:${PORT}${CONFIRM_PATH}?t=<token>`);
+    console.log(`  OTP          : ${!has('otp') ? 'OFF (two boxes and Confirm)' : REAL_OTP ? 'ON, REAL SMS (open links as http://127.0.0.1:' + PORT + ')' : 'ON (Firebase test numbers, code 123456)'}`);
+    console.log(
+        IS_PROD
+            ? '  Database     : feston-prod (REAL) — points, registrations, certificates are real rows'
+            : `  Database     : ${PROJECT_ID} (TEST copy) — live data is not touched`,
+    );
     console.log('  Hero email   : off');
     console.log('');
-    console.log('  Take a customer link from the app, replace');
-    console.log('    https://feston-prod.web.app');
-    console.log(`  with http://localhost:${PORT} and open it in this computer's browser.`);
+    if (IS_PROD) {
+        console.log('  Take a customer link from the app, replace');
+        console.log('    https://feston-prod.web.app');
+        console.log(`  with http://${HOST}:${PORT} and open it in this computer's browser.`);
+    } else {
+        console.log('  The test build of the app already links here; on a USB phone run');
+        console.log(`    adb reverse tcp:${PORT} tcp:${PORT}`);
+    }
     console.log('  Ctrl+C to stop.');
     console.log('');
     watchRegistrations();

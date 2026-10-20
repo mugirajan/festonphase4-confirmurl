@@ -5,6 +5,7 @@
       "codebase": "confirm",
       "ignore": [
         "node_modules",
+        ".cache",
         ".git",
         "test",
         "scripts",

@@ -220,3 +220,42 @@ test('a battery section appears only when batteries were recorded', () => {
     );
     assert.equal(withBatteries.some((s) => s.title === 'Batteries'), true);
 });
+
+// --- install team ("Save & hand off") ---------------------------------------
+
+const TEAM = [
+    { uid: 'u1', name: 'Ravi Kumar', contact: '+919800000001', company: 'ZZ Solar', role: 'started', firstAt: '2026-10-15T04:50:00.000Z', lastAt: '2026-10-15T04:50:00.000Z' },
+    { uid: 'u2', name: 'Suresh M', contact: '+919800000002', company: 'ZZ Solar', role: 'completed', firstAt: '2026-10-15T10:35:00.000Z', lastAt: '2026-10-15T10:35:00.000Z' },
+];
+
+const installationRows = (data) =>
+    toDisplaySections(buildDetailsFromRegistration(data)).find((s) => s.title === 'Installation').rows;
+
+test('a handed-off install shows one installer block per engineer, then the install details', () => {
+    const rows = installationRows({ ...REGISTRATION, installTeam: TEAM });
+    const headings = rows.filter((r) => r.heading).map((r) => r.heading);
+    assert.deepEqual(headings, ['Installer 1 — Started', 'Installer 2 — Completed', 'Installation details']);
+    const names = rows.filter((r) => r.label === 'Installer Name').map((r) => r.value);
+    assert.deepEqual(names, ['Ravi Kumar', 'Suresh M']);
+    const contacts = rows.filter((r) => r.label === 'Installer Contact').map((r) => r.value);
+    assert.deepEqual(contacts, ['+919800000001', '+919800000002']);
+    const workedOn = rows.filter((r) => r.label === 'Worked on').map((r) => r.value);
+    assert.match(workedOn[0], /15 Oct 2026/);
+    // The install's own facts come after the engineers, under their own heading.
+    const detailsAt = rows.findIndex((r) => r.heading === 'Installation details');
+    assert.ok(rows.slice(detailsAt).some((r) => r.label === 'Installation Date'));
+});
+
+test('a single engineer keeps the plain Installation section', () => {
+    const rows = installationRows({ ...REGISTRATION, installTeam: [TEAM[0]] });
+    assert.equal(rows.some((r) => r.heading), false);
+    assert.equal(rows.filter((r) => r.label === 'Installer Name').length, 1);
+});
+
+test('a malformed team entry is dropped and an unknown role reads as "Worked on"', () => {
+    const { normaliseTeam } = require('../lib/snapshot');
+    const team = normaliseTeam([null, 'x', { name: 'no uid' }, { uid: 'u9', name: 'A', role: '<script>' }]);
+    assert.equal(team.length, 1);
+    assert.equal(team[0].role, 'worked');
+    assert.deepEqual(normaliseTeam('not a list'), []);
+});

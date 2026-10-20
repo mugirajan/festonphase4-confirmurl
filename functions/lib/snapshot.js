@@ -60,6 +60,52 @@ function modelName(value) {
     return /^n\/?a$/i.test(model) ? '' : model;
 }
 
+/** What each engineer did, as the customer reads it. */
+const TEAM_ROLE_LABELS = {
+    started: 'Started',
+    worked: 'Worked on',
+    completed: 'Completed',
+    'started-completed': 'Started and completed',
+};
+
+/**
+ * The engineers who worked on the install ("Save & hand off" in the app), or []
+ * when the record names none — every registration made before the team was
+ * recorded, and every one made through the web.
+ *
+ * Read defensively and capped: the list comes from the app's pending record,
+ * so a malformed entry is dropped rather than rendered.
+ */
+function normaliseTeam(value) {
+    if (!Array.isArray(value)) return [];
+    return value
+        .filter((m) => m && typeof m === 'object' && asString(m.uid))
+        .slice(0, 10)
+        .map((m) => ({
+            uid: asString(m.uid),
+            name: asString(m.name),
+            contact: asString(m.contact),
+            company: asString(m.company),
+            role: TEAM_ROLE_LABELS[asString(m.role)] ? asString(m.role) : 'worked',
+            firstAt: asString(m.firstAt),
+            lastAt: asString(m.lastAt),
+        }));
+}
+
+/** "15 Oct 2026, 4:05 pm" in India time, or '' for a missing or bad stamp. */
+function dateTimeDisplay(iso) {
+    const ms = Date.parse(asString(iso));
+    if (!Number.isFinite(ms)) return '';
+    return new Date(ms).toLocaleString('en-IN', {
+        timeZone: 'Asia/Kolkata',
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+    });
+}
+
 /**
  * Builds a snapshot from a `pending_registrations` or `registered_products`
  * document — they carry the same field set, which is what makes confirming a
@@ -125,6 +171,7 @@ function buildDetailsFromRegistration(data = {}) {
             warrantyEndDate: toDateString(data.warrantyEndDate),
         },
         batteryDetails: data.batteryDetails || flatBattery(data),
+        installTeam: normaliseTeam(data.installTeam),
     };
 }
 
@@ -183,6 +230,7 @@ function normaliseDetails(details = {}) {
             warrantyEndDate: toDateString(installation.warrantyEndDate),
         },
         batteryDetails: details.batteryDetails || null,
+        installTeam: normaliseTeam(details.installTeam),
     };
 }
 
@@ -214,6 +262,7 @@ function mergeDetails(base, override) {
         product: group('product'),
         installation: group('installation'),
         batteryDetails: override.batteryDetails || base.batteryDetails || null,
+        installTeam: (override.installTeam || []).length ? override.installTeam : base.installTeam || [],
     };
 }
 
@@ -303,6 +352,35 @@ function batteryLines(batteryDetails) {
 }
 
 /**
+ * The installer rows of the Installation section.
+ *
+ * One engineer: the usual Installer Name / Contact / Company rows. Two or more
+ * (the install was handed off): the same rows once per engineer, under
+ * "Installer 1 — Started", "Installer 2 — Completed", with when they worked on
+ * it, then the install's own facts under a heading of their own, so the address
+ * and warranty are not read as belonging to the last engineer.
+ */
+function installerRows(installation, team) {
+    if (team.length < 2) {
+        return [
+            { label: 'Installer Name', value: installation.installerName },
+            { label: 'Installer Contact', value: installation.installerContact },
+            { label: 'Company', value: installation.company },
+        ];
+    }
+    const rows = [];
+    team.forEach((member, index) => {
+        rows.push({ heading: `Installer ${index + 1} — ${TEAM_ROLE_LABELS[member.role] || 'Worked on'}` });
+        rows.push({ label: 'Installer Name', value: member.name });
+        rows.push({ label: 'Installer Contact', value: member.contact });
+        rows.push({ label: 'Company', value: member.company || installation.company });
+        rows.push({ label: 'Worked on', value: dateTimeDisplay(member.lastAt || member.firstAt) });
+    });
+    rows.push({ heading: 'Installation details' });
+    return rows;
+}
+
+/**
  * Turns a snapshot into the sections the page renders.
  *
  * Empty fields are dropped rather than shown as "—": a confirmation screen
@@ -314,6 +392,7 @@ function toDisplaySections(details) {
     const customer = safe.customer || {};
     const product = safe.product || {};
     const installation = safe.installation || {};
+    const team = Array.isArray(safe.installTeam) ? safe.installTeam : [];
 
     // A row survives if it has a value, or if it is a sub-heading (which carries
     // no value of its own — it labels the rows beneath it).
@@ -338,9 +417,7 @@ function toDisplaySections(details) {
             { label: 'Subcategory', value: product.submodel },
         ]),
         section('Installation', [
-            { label: 'Installer Name', value: installation.installerName },
-            { label: 'Installer Contact', value: installation.installerContact },
-            { label: 'Company', value: installation.company },
+            ...installerRows(installation, team),
             { label: 'Installation Date', value: dateDisplay(installation.installationDate) },
             { label: 'Installation Address', value: installation.address, wide: true },
             { label: 'Postal Code', value: installation.postalCode },
@@ -382,6 +459,7 @@ function toDisplaySections(details) {
 
 module.exports = {
     buildDetailsFromRegistration,
+    normaliseTeam,
     normaliseDetails,
     mergeDetails,
     hasAnyDetail,

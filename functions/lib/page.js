@@ -16,6 +16,7 @@
 const { escapeHtml, humaniseSeconds } = require('./format');
 const { toDisplaySections } = require('./snapshot');
 const { secondsRemaining, toMillis } = require('./expiry');
+const { FAVICON_DATA_URI } = require('./favicon');
 
 const BRAND_BLUE = '#0d54a9';
 const BRAND_BLUE_DARK = '#094391';
@@ -256,6 +257,7 @@ function shell({ title, logoUrl, body, script = '' }) {
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="robots" content="noindex, nofollow" />
 <title>${escapeHtml(title)}</title>
+<link rel="icon" type="image/png" href="${FAVICON_DATA_URI}" />
 <style>${styles()}</style>
 </head>
 <body>
