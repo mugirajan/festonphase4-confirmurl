@@ -68,6 +68,7 @@ function tokenFrom(req) {
 
 const { lookupCustomerForInstaller } = require('./lib/installer-lookup');
 const { recordVerbalConsent } = require('./lib/verbal-consent');
+const { awardPhotoClaim, listPhotoRules } = require('./lib/claim-award');
 const heroServe = require('./lib/hero-serve');
 const { renderHeroPage } = require('./lib/hero-page');
 
@@ -176,6 +177,41 @@ exports.confirm = functions.https.onRequest((req, res) => {
             } catch (error) {
                 functions.logger.error('verbal-consent failed', error);
                 return sendJson(res, 500, { status: 'error', message: 'Could not record the consent' });
+            }
+        }
+
+        // Points for an install photo, paid on upload (2026-10-21). Installer
+        // ID token required; see lib/claim-award.js for what stands in for the
+        // review that used to happen in the portal.
+        if (req.method === 'POST' && action === 'award-claim') {
+            try {
+                const result = await awardPhotoClaim({
+                    firestore: admin.firestore(),
+                    verifyIdToken: (t) => admin.auth().verifyIdToken(t),
+                    authorization: req.get('authorization'),
+                    body: req.body,
+                    readObject: async (p) => (await admin.storage().bucket().file(p).download())[0],
+                    now: () => admin.firestore.FieldValue.serverTimestamp(),
+                    logger: functions.logger,
+                });
+                return sendJson(res, result.status, result.body);
+            } catch (error) {
+                functions.logger.error('award-claim failed', error);
+                return sendJson(res, 500, { status: 'error', message: 'Could not credit the points. The photo is saved.' });
+            }
+        }
+        if (req.method === 'POST' && action === 'claim-rules') {
+            try {
+                const result = await listPhotoRules({
+                    firestore: admin.firestore(),
+                    verifyIdToken: (t) => admin.auth().verifyIdToken(t),
+                    authorization: req.get('authorization'),
+                    logger: functions.logger,
+                });
+                return sendJson(res, result.status, result.body);
+            } catch (error) {
+                functions.logger.error('claim-rules failed', error);
+                return sendJson(res, 500, { status: 'error' });
             }
         }
 

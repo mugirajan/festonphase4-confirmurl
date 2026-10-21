@@ -30,6 +30,7 @@ const PAYLOAD_FIELDS = [
     'customerCity',
     'customerState',
     'customerCountry',
+    'customerPostalCode',
     // Battery
     'batterySerial',
     'batteryModel',
@@ -60,6 +61,16 @@ const PAYLOAD_FIELDS = [
     'gpsLat',
     'gpsLng',
     'gpsAccuracy',
+    // The phone's own reading and how far the pin was moved on the map
+    // (2026-10-21); judged by lib/fraud.js.
+    'gpsDeviceLat',
+    'gpsDeviceLng',
+    'gpsPinMovedM',
+    'gpsAddress',
+    // Evidence step photos added 2026-10-21. The logger photo also pays the
+    // `wifi_logger` rule at confirm (lib/store.js).
+    'wifiLoggerPhotoUrl',
+    'installationPhotoUrl',
     // Fraud signals (slide 16): photo hashes and capture times from the app,
     // judged at confirm by lib/fraud.js.
     'evidenceHashes',

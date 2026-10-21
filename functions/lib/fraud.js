@@ -20,6 +20,8 @@
  *   repeat_address         this installation address already has two or
  *                          more registrations
  *   gps_missing            no GPS pin was captured
+ *   gps_pin_moved          the map pin was moved more than 500 m from the
+ *                          phone's own GPS reading
  *   stale_photo            a photo was captured more than seven days before
  *                          the registration was staged, or in the future
  *
@@ -44,6 +46,8 @@ const AUDITS_COLLECTION = 'otp_audits';
 const STALE_PHOTO_MS = 7 * 24 * 60 * 60 * 1000;
 /** Allow for clock skew between phones. */
 const FUTURE_PHOTO_MS = 60 * 60 * 1000;
+/** A map pin moved further than this from the phone's GPS reading is flagged (slide 16's 500 m). */
+const GPS_PIN_MOVED_M = 500;
 /** Two or more OTHER registrations on the same phone or address is a cluster. */
 const CLUSTER_THRESHOLD = 2;
 
@@ -145,6 +149,14 @@ function evaluateRisk({ pending, reads, installerPhone, registrationId, now = Da
     const lng = Number(pending.gpsLng);
     if (!Number.isFinite(lat) || !Number.isFinite(lng) || (lat === 0 && lng === 0)) {
         add('gps_missing', 'No GPS pin was captured with the evidence.');
+    }
+
+    // The engineer can move the pin on the map (2026-10-21). A small nudge is
+    // normal — GPS is often off by tens of metres indoors — but a pin dragged
+    // far from where the phone actually was is worth an audit.
+    const moved = Number(pending.gpsPinMovedM);
+    if (Number.isFinite(moved) && moved > GPS_PIN_MOVED_M) {
+        add('gps_pin_moved', `The GPS pin was moved ${Math.round(moved)} m from the phone's own reading.`);
     }
 
     const staged = millisOf(pending.createdAt) || now;

@@ -453,6 +453,16 @@ async function completeRegistration(token, { userAgent, verifiedPhone, requirePh
                         earned: customerEmailVerified,
                         awardKey: 'customer_email_verified:cust:' + userId,
                     },
+                    {
+                        // The Wi-Fi logger photo is taken in the wizard's
+                        // Evidence step (2026-10-21), before any registration
+                        // exists, so it pays here. Same key as the photo award
+                        // in lib/claim-award.js, so it can never pay twice.
+                        key: 'wifi_logger',
+                        subject: 'installer',
+                        earned: typeof pending.wifiLoggerPhotoUrl === 'string' && pending.wifiLoggerPhotoUrl.trim() !== '',
+                        awardKey: 'wifi_logger:reg:' + registrationRefId,
+                    },
                 ];
 
                 for (const rule of systemRules) {

@@ -139,6 +139,7 @@ function buildDetailsFromRegistration(data = {}) {
                 data.customerCity,
                 data.customerState,
                 data.customerCountry,
+                data.customerPostalCode,
             ),
         },
         product: {

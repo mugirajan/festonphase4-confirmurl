@@ -671,6 +671,49 @@ test('confirming twice counts the install once', async () => {
     assert.equal(installerDoc().points, 50, 'and the points are awarded once');
 });
 
+test('a Wi-Fi logger photo from the Evidence step pays the wifi_logger rule at confirm', async () => {
+    seedPending({ wifiLoggerPhotoUrl: 'https://storage/logger.jpg', installationPhotoUrl: 'https://storage/install.jpg' });
+    seedInstaller({ installs: 10 });
+    documents.set(key('points_config', 'wifi_logger'), { points: 70, active: true });
+
+    await pressConfirm(TOKEN);
+
+    const ledger = [...documents.values()].filter((d) => d && d.action === 'wifi_logger');
+    assert.equal(ledger.length, 1, 'one wifi_logger ledger row');
+    assert.equal(ledger[0].points, 70);
+    assert.match(ledger[0].awardKey, /^wifi_logger:reg:/, 'keyed per install, like the photo award');
+    assert.equal(installerDoc().points, 50 + 70, 'base award plus the logger award');
+    assert.equal(registrations()[0].wifiLoggerPhotoUrl, 'https://storage/logger.jpg', 'photo reaches the registration');
+    assert.equal(registrations()[0].installationPhotoUrl, 'https://storage/install.jpg');
+});
+
+test('a map pin moved more than 500 m from the phone GPS is flagged, a small nudge is not', async () => {
+    seedPending({ gpsLat: 13.08, gpsLng: 80.27, gpsDeviceLat: 13.0, gpsDeviceLng: 80.27, gpsPinMovedM: 8900 });
+    await pressConfirm(TOKEN);
+    const flagged = registrations()[0];
+    assert.ok((flagged.riskFlags || []).includes('gps_pin_moved'), 'moved 8.9 km: flagged');
+    assert.equal(flagged.gpsDeviceLat, 13.0, 'the phone reading reaches the registration');
+    assert.equal(registrations().length, 1, 'and the customer is still registered');
+
+    seedPending({ gpsLat: 13.08, gpsLng: 80.27, gpsPinMovedM: 40 });
+    await pressConfirm(TOKEN);
+    assert.ok(!(registrations()[0].riskFlags || []).includes('gps_pin_moved'), '40 m: not flagged');
+});
+
+test('no Wi-Fi logger award while the rule is paused, or without the photo', async () => {
+    seedPending({ wifiLoggerPhotoUrl: 'https://storage/logger.jpg' });
+    seedInstaller({ installs: 10 });
+    documents.set(key('points_config', 'wifi_logger'), { points: 70, active: false });
+    await pressConfirm(TOKEN);
+    assert.equal(installerDoc().points, 50, 'paused: base award only');
+
+    seedPending();
+    seedInstaller({ installs: 10 });
+    documents.set(key('points_config', 'wifi_logger'), { points: 70, active: true });
+    await pressConfirm(TOKEN);
+    assert.equal(installerDoc().points, 50, 'no photo: base award only');
+});
+
 test('an install still counts when the points award is paused', async () => {
     seedPending();
     // `rate: null` seeds no per-kW rate at all, so nothing is payable.
