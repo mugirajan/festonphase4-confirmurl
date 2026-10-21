@@ -24,7 +24,8 @@
 const str = (v) => (typeof v === 'string' ? v.trim() : '');
 
 /** admins/{uid}.role values that are Feston staff. Blank is a legacy admin. */
-const STAFF_ROLES = new Set(['', 'admin', 'engineers', 'crm', 'regions-head', 'agents']);
+// consent-agent: the Phase 4 Consent Callback login (2026-10-20).
+const STAFF_ROLES = new Set(['', 'admin', 'engineers', 'crm', 'regions-head', 'agents', 'consent-agent']);
 
 const OUTCOMES = new Set(['consented', 'declined', 'unreachable']);
 
