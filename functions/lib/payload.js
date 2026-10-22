@@ -71,6 +71,10 @@ const PAYLOAD_FIELDS = [
     // `wifi_logger` rule at confirm (lib/store.js).
     'wifiLoggerPhotoUrl',
     'installationPhotoUrl',
+    // Optional Evidence step photos (2026-10-22); each pays its rule at
+    // confirm when present (lib/store.js).
+    'appActivatedPhotoUrl',
+    'ebBillPhotoUrl',
     // Fraud signals (slide 16): photo hashes and capture times from the app,
     // judged at confirm by lib/fraud.js.
     'evidenceHashes',

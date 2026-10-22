@@ -236,7 +236,9 @@ async function issueHero(registrationId, data) {
     }
     console.log(`  hero: registration ${label} — issuing for customer ${uid}…`);
     try {
-        const result = await heroFlow.issueForUser(uid, { logger: console });
+        // The registration too, so its warranty certificate is issued with the
+        // hero one — as the cloud trigger does (index.js).
+        const result = await heroFlow.issueForUser(uid, { logger: console, registrationId, registration: data });
         console.log('  hero: done', JSON.stringify(result));
     } catch (error) {
         console.error('  hero: failed', error);

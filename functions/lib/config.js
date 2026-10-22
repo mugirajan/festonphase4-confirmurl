@@ -167,6 +167,14 @@ const HERO_ENABLED = process.env.HERO_ENABLED !== 'false';
 /** Send the certificate email. Off leaves the certificate itself working. */
 const HERO_EMAIL_ENABLED = process.env.HERO_EMAIL_ENABLED !== 'false';
 
+/**
+ * Warranty certificate, issued with the Solar Super Hero one (2026-10-22): one
+ * per REGISTRATION, rendered as a PDF and attached to the same email.
+ */
+const WARRANTY_ENABLED = process.env.WARRANTY_ENABLED !== 'false';
+const WARRANTY_COLLECTION = process.env.WARRANTY_COLLECTION || 'warranty_certificates';
+const WARRANTY_STORAGE_PREFIX = process.env.WARRANTY_STORAGE_PREFIX || 'warranty-certificates';
+
 module.exports = {
     PENDING_COLLECTION,
     REGISTRATIONS_COLLECTION,
@@ -191,4 +199,7 @@ module.exports = {
     HERO_MAIL_FROM,
     HERO_ENABLED,
     HERO_EMAIL_ENABLED,
+    WARRANTY_ENABLED,
+    WARRANTY_COLLECTION,
+    WARRANTY_STORAGE_PREFIX,
 };

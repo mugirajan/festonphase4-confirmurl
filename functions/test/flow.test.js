@@ -671,6 +671,45 @@ test('confirming twice counts the install once', async () => {
     assert.equal(installerDoc().points, 50, 'and the points are awarded once');
 });
 
+test('an install with two or more engineers holds its points for the company admin to split', async () => {
+    seedPending({
+        installTeam: [
+            { uid: 'inst_12', name: 'Ravi', contact: '9000000012', company: 'Rppl Solar', role: 'started', firstAt: '2026-10-21T09:00:00Z', lastAt: '2026-10-21T09:30:00Z' },
+            { uid: 'inst_55', name: 'Muthu Kumar', contact: '9876543210', company: 'Rppl Solar', role: 'completed', firstAt: '2026-10-22T10:00:00Z', lastAt: '2026-10-22T10:00:00Z' },
+        ],
+    });
+    seedInstaller({ installs: 10, companyInstalls: 10 });
+
+    await pressConfirm(TOKEN);
+
+    const regId = registrations()[0] && [...documents.keys()].find((k) => k.startsWith('registered_products/')).split('/')[1];
+    const split = documents.get(key('points_splits', regId));
+    assert.ok(split, 'a split is waiting for the company admin');
+    assert.equal(split.pool, 50, '5 kW × 10 points/kW');
+    assert.equal(split.remaining, 50);
+    assert.equal(split.status, 'pending');
+    assert.equal(split.companyId, 'co_9');
+    assert.deepEqual(split.team.map((m) => [m.uid, m.role]), [['inst_12', 'started'], ['inst_55', 'completed']]);
+    assert.equal(split.product.serialnumber, '2505063529');
+
+    assert.equal(installerDoc().points, 0, 'the completer is not paid the install points');
+    assert.equal(installerDoc().lifetimeInstalls, 11, 'but the install still counts for them');
+    const base = [...documents.values()].filter((d) => d && d.action === 'complete_registration');
+    assert.equal(base.length, 0, 'no completion ledger row until the admin splits it');
+});
+
+test('a single-engineer install is paid at confirm exactly as before', async () => {
+    seedPending({
+        installTeam: [{ uid: 'inst_55', name: 'Muthu Kumar', role: 'started-completed' }],
+    });
+    seedInstaller({ installs: 10, companyInstalls: 10 });
+
+    await pressConfirm(TOKEN);
+
+    assert.equal(installerDoc().points, 50);
+    assert.equal([...documents.keys()].filter((k) => k.startsWith('points_splits/')).length, 0);
+});
+
 test('a Wi-Fi logger photo from the Evidence step pays the wifi_logger rule at confirm', async () => {
     seedPending({ wifiLoggerPhotoUrl: 'https://storage/logger.jpg', installationPhotoUrl: 'https://storage/install.jpg' });
     seedInstaller({ installs: 10 });
@@ -685,6 +724,51 @@ test('a Wi-Fi logger photo from the Evidence step pays the wifi_logger rule at c
     assert.equal(installerDoc().points, 50 + 70, 'base award plus the logger award');
     assert.equal(registrations()[0].wifiLoggerPhotoUrl, 'https://storage/logger.jpg', 'photo reaches the registration');
     assert.equal(registrations()[0].installationPhotoUrl, 'https://storage/install.jpg');
+});
+
+test('the optional app-activated and EB bill photos pay their rules at confirm, keyed per customer', async () => {
+    seedPending({ appActivatedPhotoUrl: 'https://storage/app.jpg', ebBillPhotoUrl: 'https://storage/eb.jpg' });
+    seedInstaller({ installs: 10 });
+    documents.set(key('points_config', 'customer_app_activated'), { points: 50, active: true });
+    documents.set(key('points_config', 'eb_bill_before_after'), { points: 40, active: true });
+
+    await pressConfirm(TOKEN);
+
+    const app = [...documents.values()].filter((d) => d && d.action === 'customer_app_activated');
+    const eb = [...documents.values()].filter((d) => d && d.action === 'eb_bill_before_after');
+    assert.equal(app.length, 1, 'one app-activated ledger row');
+    assert.equal(eb.length, 1, 'one EB bill ledger row');
+    assert.equal(app[0].awardKey, `customer_app_activated:cust:${CUSTOMER_UID}`, 'keyed like the photo award');
+    assert.equal(eb[0].awardKey, `eb_bill_before_after:cust:${CUSTOMER_UID}`);
+    assert.equal(installerDoc().points, 50 + 50 + 40, 'base award plus both photo awards');
+    assert.equal(registrations()[0].appActivatedPhotoUrl, 'https://storage/app.jpg', 'photo reaches the registration');
+    assert.equal(registrations()[0].ebBillPhotoUrl, 'https://storage/eb.jpg');
+});
+
+test('no app-activated or EB bill award without the photo, or when the customer was already paid', async () => {
+    seedPending();
+    seedInstaller({ installs: 10 });
+    documents.set(key('points_config', 'customer_app_activated'), { points: 50, active: true });
+    documents.set(key('points_config', 'eb_bill_before_after'), { points: 40, active: true });
+    await pressConfirm(TOKEN);
+    assert.equal(installerDoc().points, 50, 'no photos: base award only');
+
+    seedPending({ appActivatedPhotoUrl: 'https://storage/app.jpg', ebBillPhotoUrl: 'https://storage/eb.jpg' });
+    seedInstaller({ installs: 10 });
+    documents.set(key('points_config', 'customer_app_activated'), { points: 50, active: true });
+    documents.set(key('points_config', 'eb_bill_before_after'), { points: 40, active: true });
+    // Paid earlier for this customer: one from a past install, one still a claim.
+    documents.set(key('installer_points', 'earlier'), {
+        awardKey: `customer_app_activated:cust:${CUSTOMER_UID}`,
+        action: 'customer_app_activated',
+        points: 50,
+    });
+    documents.set(key('points_claims', 'waiting'), {
+        awardKey: `eb_bill_before_after:cust:${CUSTOMER_UID}`,
+        status: 'pending',
+    });
+    await pressConfirm(TOKEN);
+    assert.equal(installerDoc().points, 50, 'already held for this customer: base award only');
 });
 
 test('a map pin moved more than 500 m from the phone GPS is flagged, a small nudge is not', async () => {

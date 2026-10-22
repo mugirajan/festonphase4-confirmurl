@@ -8,6 +8,7 @@ const { payloadFields, webCompatFields } = require('./payload');
 const { resolveAward } = require('./award-rule');
 const { isFirstInstall, registeredPromptly } = require('./system-awards');
 const fraud = require('./fraud');
+const { SPLITS_COLLECTION, splitTeam, splitRecord } = require('./points-split');
 
 /**
  * Firestore access for the confirmation flow.
@@ -463,10 +464,44 @@ async function completeRegistration(token, { userAgent, verifiedPhone, requirePh
                         earned: typeof pending.wifiLoggerPhotoUrl === 'string' && pending.wifiLoggerPhotoUrl.trim() !== '',
                         awardKey: 'wifi_logger:reg:' + registrationRefId,
                     },
+                    // The optional app-activated and EB bill photos from the
+                    // Evidence step (2026-10-22). Both rules are once per
+                    // customer, keyed as lib/claim-award.js keys them, so a
+                    // photo attached later on Product files cannot pay again.
+                    {
+                        key: 'customer_app_activated',
+                        subject: 'installer',
+                        earned: typeof pending.appActivatedPhotoUrl === 'string' && pending.appActivatedPhotoUrl.trim() !== '',
+                        awardKey: 'customer_app_activated:cust:' + userId,
+                        checkPaid: true,
+                    },
+                    {
+                        key: 'eb_bill_before_after',
+                        subject: 'installer',
+                        earned: typeof pending.ebBillPhotoUrl === 'string' && pending.ebBillPhotoUrl.trim() !== '',
+                        awardKey: 'eb_bill_before_after:cust:' + userId,
+                        checkPaid: true,
+                    },
                 ];
 
                 for (const rule of systemRules) {
                     if (!rule.earned) continue;
+                    if (rule.checkPaid) {
+                        // Once per customer: an earlier install of this customer,
+                        // or a photo on Product files (lib/claim-award.js), may
+                        // already hold the award.
+                        const paid = await tx.get(
+                            firestore.collection('installer_points').where('awardKey', '==', rule.awardKey).limit(1),
+                        );
+                        if (!paid.empty) continue;
+                        const claims = await tx.get(
+                            firestore.collection('points_claims').where('awardKey', '==', rule.awardKey).limit(10),
+                        );
+                        const held = claims.docs.some(
+                            (d) => String((d.data() || {}).status || 'pending').toLowerCase() !== 'rejected',
+                        );
+                        if (held) continue;
+                    }
                     const cfg = await tx.get(firestore.collection('points_config').doc(rule.key));
                     if (!cfg.exists) continue;
                     const data = cfg.data() || {};
@@ -558,6 +593,30 @@ async function completeRegistration(token, { userAgent, verifiedPhone, requirePh
         // returns early above when the pending document is already `completed`,
         // so a customer re-opening the confirm link cannot count the install
         // twice.
+        // Two or more engineers on the install (2026-10-22): the base award is
+        // HELD for the company admin to divide between them, rather than paid
+        // to whoever submitted. Needs the company, since it is the company
+        // admin who splits it; without one it is paid as before.
+        // See lib/points-split.js.
+        const team = splitTeam(pending);
+        const holdForSplit = Boolean(installerRef && awardPoints > 0 && awardCompanyId && team.length);
+        if (holdForSplit) {
+            tx.set(
+                firestore.collection(SPLITS_COLLECTION).doc(registrationRef.id),
+                splitRecord({
+                    pending,
+                    team,
+                    pool: awardPoints,
+                    awardBasis,
+                    capacityKw,
+                    companyId: awardCompanyId,
+                    registrationId: registrationRef.id,
+                    completerUid: installerId,
+                    now: admin.firestore.FieldValue.serverTimestamp(),
+                }),
+            );
+        }
+
         if (installerRef) {
             const installerUpdate = {
                 // The count the admin portal reads on the installers register,
@@ -566,7 +625,7 @@ async function completeRegistration(token, { userAgent, verifiedPhone, requirePh
                 lastInstallAt: admin.firestore.FieldValue.serverTimestamp(),
             };
 
-            if (awardPoints > 0) {
+            if (awardPoints > 0 && !holdForSplit) {
                 installerUpdate.points = admin.firestore.FieldValue.increment(awardPoints);
                 installerUpdate.pointsUpdatedAt = admin.firestore.FieldValue.serverTimestamp();
             }
@@ -629,7 +688,7 @@ async function completeRegistration(token, { userAgent, verifiedPhone, requirePh
             });
         }
 
-        if (installerRef && awardPoints > 0) {
+        if (installerRef && awardPoints > 0 && !holdForSplit) {
             tx.set(firestore.collection('installer_points').doc(), {
                 installerId,
                     companyId: awardCompanyId,

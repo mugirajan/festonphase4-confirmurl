@@ -19,26 +19,76 @@
  */
 
 const admin = require('firebase-admin');
-const { HERO_COLLECTION, HERO_EMAIL_ENABLED, MAIL_COLLECTION, heroPageUrl } = require('./config');
-const { loadRegistrations, plan, render, signedUrl, millisOf } = require('./hero-issue');
-const { buildMailDocument } = require('./hero-mail');
+const {
+    HERO_COLLECTION,
+    HERO_ENABLED,
+    HERO_EMAIL_ENABLED,
+    MAIL_COLLECTION,
+    WARRANTY_ENABLED,
+    heroPageUrl,
+} = require('./config');
+const { loadRegistrations, plan, render, signedUrl, millisOf, bucket } = require('./hero-issue');
+const { buildMailDocument, buildWarrantyMailDocument } = require('./hero-mail');
+const { issueWarranty, markEmailed, warrantyFilename } = require('./warranty-certificate');
+const { renderLayout } = require('./hero-render');
 const mailer = require('./mailer');
 
 /**
- * Issues (or re-issues) the certificate for one customer.
+ * Issues (or re-issues) the certificate for one customer — and, since
+ * 2026-10-22, the WARRANTY certificate for the registration that triggered it,
+ * at the same time and in the same email.
+ *
+ * The warranty is issued first and never blocks the hero certificate. If it
+ * fails, the hero work still completes and the function then throws, so the
+ * platform's retry issues the warranty: on that retry the hero plan reads
+ * "unchanged" and the warranty goes out in an email of its own.
  *
  * Returns a small result object describing what happened, which is what the
  * trigger logs. Throws only on a genuine failure, so the platform's own retry
  * is what handles a transient Chrome or Storage error.
  */
-async function issueForUser(uid, { logger = console } = {}) {
+async function issueForUser(uid, { logger = console, registrationId = '', registration = null } = {}) {
     const firestore = admin.firestore();
+
+    let warranty = null;
+    let warrantyError = null;
+    if (WARRANTY_ENABLED && registrationId && registration) {
+        try {
+            warranty = await issueWarranty(firestore, registrationId, registration, { renderLayout, bucket });
+        } catch (error) {
+            warrantyError = error;
+            logger.error('warranty certificate: could not issue', {
+                uid,
+                registrationId,
+                error: String(error && error.message ? error.message : error),
+            });
+        }
+    }
+
+    const result = await issueHero(firestore, uid, warranty, logger);
+    if (warrantyError) throw warrantyError;
+    return { ...result, warranty: warranty ? warranty.pdfPath : null };
+}
+
+/** The hero certificate itself; `warranty` (or null) rides along in its email. */
+async function issueHero(firestore, uid, warranty, logger) {
+    if (!HERO_ENABLED) {
+        const emailedWarranty = await queueWarrantyEmail(firestore, warranty, logger);
+        return { action: 'skip', reason: 'hero-disabled', emailedWarranty };
+    }
+
     const registrations = await loadRegistrations(firestore, uid);
-    if (!registrations.length) return { action: 'skip', reason: 'no-registrations' };
+    if (!registrations.length) {
+        const emailedWarranty = await queueWarrantyEmail(firestore, warranty, logger);
+        return { action: 'skip', reason: 'no-registrations', emailedWarranty };
+    }
 
     const decision = await plan(firestore, uid, registrations);
     if (decision.action === 'skip') {
-        return { action: 'skip', reason: decision.reason };
+        // Nothing new on the hero certificate, so no hero email — but the
+        // warranty for this product still goes out, on its own.
+        const emailedWarranty = await queueWarrantyEmail(firestore, warranty, logger);
+        return { action: 'skip', reason: decision.reason, emailedWarranty };
     }
 
     const ref = firestore.collection(HERO_COLLECTION).doc(uid);
@@ -83,7 +133,7 @@ async function issueForUser(uid, { logger = console } = {}) {
         { merge: true },
     );
 
-    const emailed = await queueEmail(firestore, certificate, files, decision.action, logger);
+    const emailed = await queueEmail(firestore, certificate, files, decision.action, logger, warranty);
 
     return {
         action: decision.action,
@@ -103,7 +153,7 @@ async function issueForUser(uid, { logger = console } = {}) {
  * smaller harm than throwing, which would make the platform retry the whole
  * function and render the thing again.
  */
-async function queueEmail(firestore, certificate, files, action, logger) {
+async function queueEmail(firestore, certificate, files, action, logger, warranty = null) {
     if (!HERO_EMAIL_ENABLED) return false;
     const to = String(certificate.customerEmail || '').trim();
     if (!to) {
@@ -114,10 +164,14 @@ async function queueEmail(firestore, certificate, files, action, logger) {
         return false;
     }
 
+    // Attach the warranty only if it has not been emailed already (a retry).
+    const attachWarranty = !!(warranty && warranty.pdfPath && !warranty.emailedAt);
+
     try {
-        const [pngUrl, pdfUrl] = await Promise.all([
+        const [pngUrl, pdfUrl, warrantyUrl] = await Promise.all([
             signedUrl(files.pngPath),
             signedUrl(files.pdfPath),
+            attachWarranty ? signedUrl(warranty.pdfPath) : Promise.resolve(''),
         ]);
         const mailRef = await firestore.collection(MAIL_COLLECTION).add({
             ...buildMailDocument({
@@ -130,14 +184,23 @@ async function queueEmail(firestore, certificate, files, action, logger) {
                 pngUrl,
                 pdfUrl,
                 pageUrl: heroPageUrl(certificate.certificateNumber),
+                warranty: warrantyUrl
+                    ? {
+                          url: warrantyUrl,
+                          filename: warrantyFilename(warranty.serialnumber),
+                          serial: warranty.serialnumber,
+                      }
+                    : null,
             }),
             // Ours, not the extension's. Lets a support query answer "was this
             // customer sent their certificate, and which version".
             heroUid: certificate.uid,
             heroCertificateNumber: certificate.certificateNumber,
             heroVersion: certificate.version,
+            ...(warrantyUrl ? { warrantyRegistrationId: warranty.registrationId } : {}),
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
         });
+        if (warrantyUrl) await markEmailed(firestore, warranty.registrationId);
 
         // Queue first, then drain. The document is the audit trail — when a
         // customer says they never got their certificate, `delivery.state` says
@@ -163,6 +226,50 @@ async function queueEmail(firestore, certificate, files, action, logger) {
 }
 
 /**
+ * The warranty certificate on its own, for when there is no hero email to
+ * carry it. Never throws, for the same reason as queueEmail; once queued it is
+ * marked emailed so a retry does not send it twice.
+ */
+async function queueWarrantyEmail(firestore, warranty, logger) {
+    if (!HERO_EMAIL_ENABLED || !warranty || !warranty.pdfPath || warranty.emailedAt) return false;
+    const to = String(warranty.customerEmail || '').trim();
+    if (!to) {
+        logger.warn('warranty certificate: no email address on file', { registrationId: warranty.registrationId });
+        return false;
+    }
+    try {
+        const url = await signedUrl(warranty.pdfPath);
+        const mailRef = await firestore.collection(MAIL_COLLECTION).add({
+            ...buildWarrantyMailDocument({
+                to,
+                customerName: warranty.customerName,
+                serialnumber: warranty.serialnumber,
+                url,
+                filename: warrantyFilename(warranty.serialnumber),
+            }),
+            warrantyRegistrationId: warranty.registrationId,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        await markEmailed(firestore, warranty.registrationId);
+        const sent = await mailer.sendQueued(mailRef.id);
+        if (!sent.sent && sent.reason === 'error') {
+            logger.warn('warranty certificate: the email failed to send', {
+                registrationId: warranty.registrationId,
+                mailDocId: mailRef.id,
+                error: sent.error,
+            });
+        }
+        return true;
+    } catch (error) {
+        logger.error('warranty certificate: could not queue the email', {
+            registrationId: warranty.registrationId,
+            error: String(error && error.message ? error.message : error),
+        });
+        return false;
+    }
+}
+
+/**
  * The owner of a newly created registration.
  *
  * `userId` is the field the confirm service stamps on every registration it
@@ -173,4 +280,4 @@ function uidFromRegistration(data) {
     return uid || null;
 }
 
-module.exports = { issueForUser, queueEmail, uidFromRegistration, millisOf };
+module.exports = { issueForUser, queueEmail, queueWarrantyEmail, uidFromRegistration, millisOf };

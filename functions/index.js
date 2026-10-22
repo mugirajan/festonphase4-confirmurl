@@ -69,6 +69,18 @@ function tokenFrom(req) {
 const { lookupCustomerForInstaller } = require('./lib/installer-lookup');
 const { recordVerbalConsent } = require('./lib/verbal-consent');
 const { awardPhotoClaim, listPhotoRules } = require('./lib/claim-award');
+const pointsSplit = require('./lib/points-split');
+
+/** `?action=` → handler, for the multi-engineer points split and notifications. */
+const SPLIT_ACTIONS = {
+    'split-pending': pointsSplit.listPendingSplits,
+    'split-history': pointsSplit.listSplitHistory,
+    // The company admin's Certificates page: their customers' Super Hero numbers.
+    'company-heroes': require('./lib/company-certificates').listCompanyHeroCertificates,
+    'split-award': pointsSplit.awardSplit,
+    notifications: pointsSplit.listNotifications,
+    'notifications-read': pointsSplit.markNotificationsRead,
+};
 const heroServe = require('./lib/hero-serve');
 const { renderHeroPage } = require('./lib/hero-page');
 
@@ -200,6 +212,27 @@ exports.confirm = functions.https.onRequest((req, res) => {
                 return sendJson(res, 500, { status: 'error', message: 'Could not credit the points. The photo is saved.' });
             }
         }
+        // Multi-engineer installs (2026-10-22): the company admin divides the
+        // held install points, and each engineer reads their notifications.
+        // ID token required on all four; see lib/points-split.js.
+        if (req.method === 'POST' && SPLIT_ACTIONS[action]) {
+            try {
+                const result = await SPLIT_ACTIONS[action]({
+                    firestore: admin.firestore(),
+                    verifyIdToken: (t) => admin.auth().verifyIdToken(t),
+                    authorization: req.get('authorization'),
+                    body: req.body,
+                    now: () => admin.firestore.FieldValue.serverTimestamp(),
+                    increment: (n) => admin.firestore.FieldValue.increment(n),
+                    logger: functions.logger,
+                });
+                return sendJson(res, result.status, result.body);
+            } catch (error) {
+                functions.logger.error(`${action} failed`, error);
+                return sendJson(res, 500, { status: 'error', message: 'Something went wrong. Please try again.' });
+            }
+        }
+
         if (req.method === 'POST' && action === 'claim-rules') {
             try {
                 const result = await listPhotoRules({
@@ -410,7 +443,7 @@ async function handleConfirm(req, res, token) {
  * render certificates nobody is waiting on.
  */
 const { onDocumentCreated } = require('firebase-functions/v2/firestore');
-const { HERO_ENABLED, REGISTRATIONS_COLLECTION } = require('./lib/config');
+const { HERO_ENABLED, WARRANTY_ENABLED, REGISTRATIONS_COLLECTION } = require('./lib/config');
 const heroFlow = require('./lib/hero-flow');
 
 exports.issueHeroCertificate = onDocumentCreated(
@@ -425,7 +458,9 @@ exports.issueHeroCertificate = onDocumentCreated(
         retry: true,
     },
     async (event) => {
-        if (!HERO_ENABLED) return;
+        // Also issues this registration's warranty certificate, in the same
+        // email (2026-10-22) — see lib/hero-flow.js.
+        if (!HERO_ENABLED && !WARRANTY_ENABLED) return;
 
         const data = event.data && event.data.data();
         const uid = heroFlow.uidFromRegistration(data);
@@ -436,7 +471,11 @@ exports.issueHeroCertificate = onDocumentCreated(
             return;
         }
 
-        const result = await heroFlow.issueForUser(uid, { logger: functions.logger });
+        const result = await heroFlow.issueForUser(uid, {
+            logger: functions.logger,
+            registrationId: event.params.registrationId,
+            registration: data,
+        });
         functions.logger.info('hero certificate', {
             uid,
             registrationId: event.params.registrationId,
