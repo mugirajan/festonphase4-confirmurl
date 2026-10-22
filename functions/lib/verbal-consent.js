@@ -68,6 +68,17 @@ async function recordVerbalConsent({ firestore, verifyIdToken, authorization, bo
     if (outcome !== 'unreachable' && note.length < 5) {
         return { status: 400, body: { status: 'bad-request', message: 'A note of what the customer said is required.' } };
     }
+    // The same two required confirmations as the customer's own page
+    // (2026-10-22): read out on the call and ticked one by one, not assumed.
+    if (outcome === 'consented' && (b.acceptedTerms !== true || b.acceptedDataForTraining !== true)) {
+        return {
+            status: 400,
+            body: {
+                status: 'bad-request',
+                message: 'The customer must agree to both the Terms & Conditions and the data use, as on their own confirmation page.',
+            },
+        };
+    }
 
     const calledAt = now();
     const callbackRef = callbackId ? firestore.collection('consent_callbacks').doc(callbackId) : null;

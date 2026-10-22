@@ -75,7 +75,7 @@ test('a bad outcome or a missing note is a 400', async () => {
 
 test('consent recorded by staff completes the registration, ignoring link expiry, and closes the callback', async () => {
     const ctx = setup();
-    const res = await run(ctx, 'Bearer tok-crm', { token: 'T1', callbackId: 'cb1', outcome: 'consented', note: 'Customer confirmed all details over the phone', recordingRef: 'call-42' });
+    const res = await run(ctx, 'Bearer tok-crm', { token: 'T1', callbackId: 'cb1', outcome: 'consented', note: 'Customer confirmed all details over the phone', recordingRef: 'call-42', acceptedTerms: true, acceptedDataForTraining: true });
     assert.equal(res.status, 200);
     assert.equal(res.body.status, 'completed');
     assert.equal(res.body.registeredProductId, 'reg_9');
@@ -107,7 +107,50 @@ test('declined and unreachable close the callback without completing anything', 
 
 test('a link that no longer exists reports not-found and leaves the callback open', async () => {
     const ctx = setup();
-    const res = await run(ctx, 'Bearer tok-staff', { token: 'T-gone', callbackId: 'cb1', outcome: 'consented', note: 'said yes to everything' });
+    const res = await run(ctx, 'Bearer tok-staff', { token: 'T-gone', callbackId: 'cb1', outcome: 'consented', note: 'said yes to everything', acceptedTerms: true, acceptedDataForTraining: true });
     assert.equal(res.status, 404);
     assert.equal(ctx.data.consent_callbacks.cb1.status, 'queued');
+});
+
+// ── The customer's own form on the call (2026-10-22) ───────────────────────
+
+test('consent needs both required confirmations, as on the customer page', async () => {
+    const ctx = setup();
+    const base = { token: 'T1', outcome: 'consented', note: 'Customer confirmed everything' };
+    assert.equal((await run(ctx, 'Bearer tok-staff', base)).status, 400);
+    assert.equal((await run(ctx, 'Bearer tok-staff', { ...base, acceptedTerms: true })).status, 400);
+    assert.equal(ctx.calls.length, 0, 'nothing registered without both');
+    const ok = await run(ctx, 'Bearer tok-staff', { ...base, acceptedTerms: true, acceptedDataForTraining: true });
+    assert.equal(ok.status, 200);
+    // Declined and unreachable need no confirmations.
+    assert.equal((await run(ctx, 'Bearer tok-staff', { token: 'T1', outcome: 'declined', note: 'Not interested' })).status, 200);
+});
+
+const { consentForm, CONFIRMATIONS } = require('../lib/consent-form');
+
+test('the consent form gives staff the customer page sections and confirmations', async () => {
+    const ctx = setup();
+    const pending = {
+        status: 'pending',
+        expiresAt: { toMillis: () => Date.now() - 1000 },
+        customerName: 'Yogesh',
+        customerContact: '+919000000004',
+        serialnumber: '2209040024',
+        productFamily: 'ongrid',
+        installationDate: '2026-10-22',
+        installationAddress: '12, 2nd Avenue',
+    };
+    const loadPending = async (t) => (t === 'T1' ? pending : null);
+    const call = (authorization, token) =>
+        consentForm({ firestore: fakeFirestore(ctx.data), verifyIdToken: verify, authorization, body: { token }, loadPending });
+
+    const r = await call('Bearer tok-crm', 'T1');
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.sections.map((s) => s.title), ['Your details', 'Product', 'Installation']);
+    assert.equal(r.body.expired, true, 'an expired link still opens for a consent call');
+    assert.deepEqual(r.body.confirmations, CONFIRMATIONS);
+    assert.deepEqual(CONFIRMATIONS.filter((c) => c.required).map((c) => c.key), ['acceptedTerms', 'acceptedDataForTraining']);
+
+    assert.equal((await call('Bearer tok-company', 'T1')).status, 403, 'company admins do not take consent calls');
+    assert.equal((await call('Bearer tok-crm', 'nope')).status, 404);
 });

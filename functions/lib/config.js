@@ -175,6 +175,14 @@ const WARRANTY_ENABLED = process.env.WARRANTY_ENABLED !== 'false';
 const WARRANTY_COLLECTION = process.env.WARRANTY_COLLECTION || 'warranty_certificates';
 const WARRANTY_STORAGE_PREFIX = process.env.WARRANTY_STORAGE_PREFIX || 'warranty-certificates';
 
+/**
+ * Google Geocoding API key for `?action=reverse-geocode` (2026-10-22): the
+ * address under the app's GPS pin. Restricted to the Geocoding API in the
+ * Cloud console; it lives here, never in the app. Empty means the action
+ * answers 503 and the app falls back to OpenStreetMap.
+ */
+const GEOCODING_API_KEY = process.env.GEOCODING_API_KEY || '';
+
 module.exports = {
     PENDING_COLLECTION,
     REGISTRATIONS_COLLECTION,
@@ -202,4 +210,5 @@ module.exports = {
     WARRANTY_ENABLED,
     WARRANTY_COLLECTION,
     WARRANTY_STORAGE_PREFIX,
+    GEOCODING_API_KEY,
 };

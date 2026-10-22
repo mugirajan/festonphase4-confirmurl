@@ -75,8 +75,14 @@ const pointsSplit = require('./lib/points-split');
 const SPLIT_ACTIONS = {
     'split-pending': pointsSplit.listPendingSplits,
     'split-history': pointsSplit.listSplitHistory,
+    // The app's Install photos screen: points earned and still open for an install.
+    'install-points': require('./lib/claim-award').installPoints,
+    // Feston support's consent call: the customer's own confirmation form.
+    'consent-form': require('./lib/consent-form').consentForm,
     // The company admin's Certificates page: their customers' Super Hero numbers.
     'company-heroes': require('./lib/company-certificates').listCompanyHeroCertificates,
+    // The app's GPS step: the written address at the pin, from Google Geocoding.
+    'reverse-geocode': require('./lib/reverse-geocode').reverseGeocode,
     'split-award': pointsSplit.awardSplit,
     notifications: pointsSplit.listNotifications,
     'notifications-read': pointsSplit.markNotificationsRead,
@@ -224,6 +230,7 @@ exports.confirm = functions.https.onRequest((req, res) => {
                     body: req.body,
                     now: () => admin.firestore.FieldValue.serverTimestamp(),
                     increment: (n) => admin.firestore.FieldValue.increment(n),
+                    loadPending: (t) => store.loadPending(t),
                     logger: functions.logger,
                 });
                 return sendJson(res, result.status, result.body);

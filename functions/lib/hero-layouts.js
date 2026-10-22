@@ -22,7 +22,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { TEMPLATE, fillTemplate, dropRegion } = require('./hero-certificate');
+const { TEMPLATE, fillTemplate, dropRegion, PRODUCTS_IMAGE_URI } = require('./hero-certificate');
 
 /** Render geometry per layout. `scale` is Chrome's deviceScaleFactor. */
 const LAYOUTS = {
@@ -83,6 +83,8 @@ function extractAssets(source = TEMPLATE) {
         emblem: images[1],
         rose: unsizeSvg(rose),
         ribbon: unsizeSvg(ribbon),
+        // The product line-up under the impact sentence (2026-10-22).
+        products: PRODUCTS_IMAGE_URI,
     };
 }
 

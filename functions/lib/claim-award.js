@@ -280,4 +280,102 @@ async function listPhotoRules({ firestore, verifyIdToken, authorization, logger 
     return reply(200, { status: 'ok', rules });
 }
 
-module.exports = { awardPhotoClaim, listPhotoRules, PHOTO_RULES, awardKeyFor, claimIdFor };
+/** Names for the ledger actions an install earns, for the points summary. */
+const ACTION_LABELS = {
+    complete_registration: 'Install points',
+    registration_within_48h: 'Registered within 48 hours',
+    customer_email_verified: 'Customer email verified',
+    new_se_first_install: "New engineer's first install",
+};
+
+/**
+ * The points picture for one install, for the app's Install photos screen
+ * (2026-10-22): what has been earned from it, and which photo rewards are
+ * still open for this customer and worth how much.
+ *
+ * body: { registrationId }. The caller must have worked on the install, as
+ * for awardPhotoClaim. A photo rule counts as earned when the ledger already
+ * holds its award key (paid by any route — wizard, confirm, upload) or a claim
+ * for it is still waiting; the same test awardPhotoClaim applies.
+ */
+async function installPoints({ firestore, verifyIdToken, authorization, body, logger }) {
+    const bearer = /^Bearer\s+(.+)$/i.exec(str(authorization));
+    if (!bearer) return reply(401, { status: 'unauthenticated' });
+    let uid = '';
+    try {
+        uid = str((await verifyIdToken(bearer[1])).uid);
+    } catch (error) {
+        if (logger) logger.warn('install-points: token verification failed', error);
+    }
+    if (!uid) return reply(401, { status: 'unauthenticated' });
+
+    const registrationId = str(body && body.registrationId);
+    if (!registrationId) return reply(400, { status: 'bad-request' });
+    const installer = await findInstallerByUid(firestore, uid);
+    if (!installer || (installer.data() || {}).active === false) return reply(403, { status: 'not-installer' });
+
+    const regSnap = await firestore.collection(REGISTRATIONS_COLLECTION).doc(registrationId).get();
+    if (!regSnap.exists) return reply(404, { status: 'no-registration' });
+    const reg = regSnap.data() || {};
+    const team = Array.isArray(reg.installTeamUids) ? reg.installTeamUids.map(str) : [];
+    if (str(reg.registeredByInstallerId) !== uid && !team.includes(uid)) {
+        return reply(403, { status: 'not-on-install' });
+    }
+    const customerId = str(reg.userId);
+
+    // Everything paid against this install, engineers' and company's.
+    const [own, company] = await Promise.all([
+        firestore.collection('installer_points').where('registrationId', '==', registrationId).limit(200).get(),
+        firestore.collection('company_points').where('registrationId', '==', registrationId).limit(200).get(),
+    ]);
+    const credit = (d) => {
+        const r = d.data() || {};
+        return str(r.type) !== 'debit' ? Number(r.points) || 0 : -(Number(r.points) || 0);
+    };
+    const earnedByAction = new Map();
+    let earnedTotal = 0;
+    let myTotal = 0;
+    for (const d of [...own.docs, ...company.docs]) {
+        const r = d.data() || {};
+        const action = str(r.action);
+        const pts = credit(d);
+        earnedTotal += pts;
+        if (str(r.installerId) === uid) myTotal += pts;
+        const label = ACTION_LABELS[action] || (PHOTO_RULES[action] && PHOTO_RULES[action].label) || action || 'Points';
+        earnedByAction.set(label, (earnedByAction.get(label) || 0) + pts);
+    }
+    const earned = [...earnedByAction.entries()].map(([label, points]) => ({ label, points }));
+
+    // Each photo reward: earned already (here or for this customer elsewhere),
+    // or open — with what it is worth now.
+    const rules = [];
+    let availableTotal = 0;
+    for (const [kind, rule] of Object.entries(PHOTO_RULES)) {
+        const cfgSnap = await firestore.collection('points_config').doc(kind).get();
+        const cfg = cfgSnap.exists ? cfgSnap.data() || {} : {};
+        const points = Math.round(Number(cfg.points));
+        const active = cfgSnap.exists && cfg.active !== false && Number.isFinite(points) && points > 0;
+        if (!active) continue;
+        const awardKey = awardKeyFor(kind, rule, { registrationId, customerId });
+        if (!awardKey) continue;
+        const ledgerName = rule.subject === 'company' ? 'company_points' : 'installer_points';
+        const [paid, claims] = await Promise.all([
+            firestore.collection(ledgerName).where('awardKey', '==', awardKey).limit(1).get(),
+            firestore.collection(CLAIMS_COLLECTION).where('awardKey', '==', awardKey).limit(10).get(),
+        ]);
+        const held = claims.docs.some((c) => (str((c.data() || {}).status).toLowerCase() || 'pending') !== 'rejected');
+        const done = !paid.empty || held;
+        rules.push({ kind, label: rule.label, points, subject: rule.subject, status: done ? 'earned' : 'available' });
+        if (!done) availableTotal += points;
+    }
+
+    // A shared install's points not yet divided by the company admin
+    // (lib/points-split.js) — earned, but not paid to anyone yet.
+    const splitSnap = await firestore.collection('points_splits').doc(registrationId).get();
+    const split = splitSnap.exists ? splitSnap.data() || {} : {};
+    const heldTotal = str(split.status) === 'pending' ? Number(split.remaining) || 0 : 0;
+
+    return reply(200, { status: 'ok', earned, earnedTotal, myTotal, heldTotal, rules, availableTotal });
+}
+
+module.exports = { awardPhotoClaim, listPhotoRules, installPoints, PHOTO_RULES, awardKeyFor, claimIdFor };

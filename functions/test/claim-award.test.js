@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { awardPhotoClaim, listPhotoRules } = require('../lib/claim-award');
+const { awardPhotoClaim, listPhotoRules, installPoints } = require('../lib/claim-award');
 
 // A small Firestore fake: collections of {id -> data}, equality queries,
 // and a transaction whose writes apply when the callback returns.
@@ -265,4 +265,39 @@ test('claim-rules: a customer token -> 403', async () => {
 test('unknown registration -> 404', async () => {
     const r = await call(fakeFirestore(seed()), 'tok-sub', { registrationId: 'nope', kind: 'linkedin_post', storagePath: 'product_files/nope/1.jpg' });
     assert.equal(r.status, 404);
+});
+
+// ── Install points summary (2026-10-22) ────────────────────────────────────
+
+const summary = (fs, token, registrationId = 'reg1') =>
+    installPoints({ firestore: fs, verifyIdToken: verify, authorization: `Bearer ${token}`, body: { registrationId } });
+
+test('install points: what was earned on this install, and which photo rewards are still open', async () => {
+    const s = seed();
+    s.points_config.eb_bill_before_after = { points: 50, active: true };
+    s.installer_points = {
+        l1: { installerId: 'uid_sub', registrationId: 'reg1', action: 'complete_registration', points: 150, type: 'credit' },
+        l2: { installerId: 'uid_help', registrationId: 'reg1', action: 'complete_registration', points: 30, type: 'credit' },
+        // EB bill already paid for this CUSTOMER on another install.
+        l3: { installerId: 'uid_sub', registrationId: 'reg2', action: 'eb_bill_before_after', points: 50, awardKey: 'eb_bill_before_after:cust:cust1' },
+    };
+    const r = await summary(fakeFirestore(s), 'tok-sub');
+    assert.equal(r.status, 200);
+    assert.equal(r.body.earnedTotal, 180, 'everything paid against reg1');
+    assert.equal(r.body.myTotal, 150, "the caller's own share");
+    assert.deepEqual(r.body.earned, [{ label: 'Install points', points: 180 }]);
+
+    const byKind = Object.fromEntries(r.body.rules.map((x) => [x.kind, x.status]));
+    assert.equal(byKind.linkedin_post, 'available');
+    assert.equal(byKind.eb_bill_before_after, 'earned', 'once per customer: paid elsewhere counts');
+    assert.equal(byKind.printed_certificate, 'available');
+    assert.equal(byKind.wifi_logger, undefined, 'paused rules are left out');
+    assert.equal(byKind.google_review, undefined, 'zero-point rules are left out');
+    assert.equal(r.body.availableTotal, 50 + 200);
+});
+
+test('install points: only engineers who worked on the install may see it', async () => {
+    const fs = fakeFirestore(seed());
+    assert.equal((await summary(fs, 'tok-other')).status, 403);
+    assert.equal((await summary(fs, 'tok-helper')).status, 200);
 });

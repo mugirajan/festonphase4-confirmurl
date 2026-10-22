@@ -21,7 +21,15 @@ const fs = require('fs');
 const path = require('path');
 
 const TEMPLATE_PATH = path.join(__dirname, 'hero-template.html');
-const TEMPLATE = fs.readFileSync(TEMPLATE_PATH, 'utf8');
+
+/**
+ * The Feston product line-up shown under the impact sentence on every layout
+ * (2026-10-22), embedded so Chrome renders it without fetching anything.
+ * `{{@products}}` in a template is replaced with it.
+ */
+const PRODUCTS_IMAGE_URI = `data:image/jpeg;base64,${fs.readFileSync(path.join(__dirname, 'hero-products.jpg')).toString('base64')}`;
+
+const TEMPLATE = fs.readFileSync(TEMPLATE_PATH, 'utf8').replace(/\{\{@products\}\}/g, PRODUCTS_IMAGE_URI);
 
 /** Every token the template declares. A render must supply all of them. */
 const TOKENS = [
@@ -179,6 +187,7 @@ module.exports = {
     TOKENS,
     TEMPLATE,
     TEMPLATE_PATH,
+    PRODUCTS_IMAGE_URI,
     escapeHtml,
     formatIssueDate,
     verifyLabelFor,
