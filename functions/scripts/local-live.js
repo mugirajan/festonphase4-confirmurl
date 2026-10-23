@@ -31,8 +31,8 @@
  *
  * Safety
  *   - Nothing is deployed and nothing is read from functions/.env.
- *   - Hero email is OFF here (HERO_EMAIL_ENABLED=false), so a test never queues
- *     a mail that would go out to a real customer once SMTP is configured.
+ *   - Hero email is OFF unless started with --mail (and SMTP_* in the env), so a
+ *     test never queues a mail to a real customer by accident.
  *   - Only registrations created AFTER the runner starts get a certificate.
  */
 
@@ -97,7 +97,11 @@ const HOST = '127.0.0.1';
 process.env.CONFIRM_PUBLIC_BASE_URL = `http://${HOST}:${PORT}${CONFIRM_PATH}`;
 process.env.CONFIRM_OTP_ENABLED = has('otp') ? 'true' : 'false';
 process.env.CONFIRM_OTP_TEST_MODE = has('otp') && !REAL_OTP ? 'true' : 'false';
-process.env.HERO_EMAIL_ENABLED = 'false';
+// Email is OFF unless --mail is given (2026-10-23): with SMTP_* set in the
+// environment, --mail sends the certificate / warranty emails for registrations
+// made while the runner is up — use a Feston or your own address as the customer.
+const MAIL = has('mail');
+process.env.HERO_EMAIL_ENABLED = MAIL ? 'true' : 'false';
 
 // firebase-functions and cors only wrap the handler; everything else is real.
 const originalLoad = Module._load;
@@ -256,7 +260,7 @@ server.listen(PORT, () => {
             ? '  Database     : feston-prod (REAL) — points, registrations, certificates are real rows'
             : `  Database     : ${PROJECT_ID} (TEST copy) — live data is not touched`,
     );
-    console.log('  Hero email   : off');
+    console.log(`  Hero email   : ${MAIL ? (process.env.SMTP_HOST ? 'ON via ' + process.env.SMTP_USER : 'requested (--mail) but no SMTP_* set — nothing will send') : 'off (start with --mail to send)'}`);
     console.log('');
     if (IS_PROD) {
         console.log('  Take a customer link from the app, replace');

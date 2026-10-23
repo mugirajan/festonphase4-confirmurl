@@ -30,6 +30,7 @@ const {
 const { loadRegistrations, plan, render, signedUrl, millisOf, bucket } = require('./hero-issue');
 const { buildMailDocument, buildWarrantyMailDocument } = require('./hero-mail');
 const { issueWarranty, markEmailed, warrantyFilename } = require('./warranty-certificate');
+const { issueTestReport, testReportFilename } = require('./test-report');
 const { renderLayout } = require('./hero-render');
 const mailer = require('./mailer');
 
@@ -55,6 +56,17 @@ async function issueForUser(uid, { logger = console, registrationId = '', regist
     if (WARRANTY_ENABLED && registrationId && registration) {
         try {
             warranty = await issueWarranty(firestore, registrationId, registration, { renderLayout, bucket });
+            // The factory test report rides with the warranty (2026-10-23): same
+            // email, same "once per registration" rule. Its failure is logged
+            // but never blocks the warranty or the hero certificate.
+            try {
+                warranty.testReport = await issueTestReport(firestore, registrationId, registration, { renderLayout, bucket });
+            } catch (error) {
+                logger.error('test report: could not issue', {
+                    registrationId,
+                    error: String(error && error.message ? error.message : error),
+                });
+            }
         } catch (error) {
             warrantyError = error;
             logger.error('warranty certificate: could not issue', {
@@ -168,10 +180,12 @@ async function queueEmail(firestore, certificate, files, action, logger, warrant
     const attachWarranty = !!(warranty && warranty.pdfPath && !warranty.emailedAt);
 
     try {
-        const [pngUrl, pdfUrl, warrantyUrl] = await Promise.all([
+        const testReportPath = attachWarranty && warranty.testReport ? warranty.testReport.pdfPath : '';
+        const [pngUrl, pdfUrl, warrantyUrl, testReportUrl] = await Promise.all([
             signedUrl(files.pngPath),
             signedUrl(files.pdfPath),
             attachWarranty ? signedUrl(warranty.pdfPath) : Promise.resolve(''),
+            testReportPath ? signedUrl(testReportPath) : Promise.resolve(''),
         ]);
         const mailRef = await firestore.collection(MAIL_COLLECTION).add({
             ...buildMailDocument({
@@ -189,6 +203,8 @@ async function queueEmail(firestore, certificate, files, action, logger, warrant
                           url: warrantyUrl,
                           filename: warrantyFilename(warranty.serialnumber),
                           serial: warranty.serialnumber,
+                          testReportUrl,
+                          testReportFilename: testReportFilename(warranty.serialnumber),
                       }
                     : null,
             }),
@@ -239,6 +255,7 @@ async function queueWarrantyEmail(firestore, warranty, logger) {
     }
     try {
         const url = await signedUrl(warranty.pdfPath);
+        const testReportUrl = warranty.testReport && warranty.testReport.pdfPath ? await signedUrl(warranty.testReport.pdfPath) : '';
         const mailRef = await firestore.collection(MAIL_COLLECTION).add({
             ...buildWarrantyMailDocument({
                 to,
@@ -246,6 +263,8 @@ async function queueWarrantyEmail(firestore, warranty, logger) {
                 serialnumber: warranty.serialnumber,
                 url,
                 filename: warrantyFilename(warranty.serialnumber),
+                testReportUrl,
+                testReportFilename: testReportFilename(warranty.serialnumber),
             }),
             warrantyRegistrationId: warranty.registrationId,
             createdAt: admin.firestore.FieldValue.serverTimestamp(),

@@ -32,7 +32,7 @@ const { HERO_MAIL_FROM } = require('./config');
 const FESTON_WEBSITE = 'https://festonsev.com/';
 
 /** Brand colours, matching the certificate itself. */
-const BRAND = '#045CA4';
+const BRAND = '#055CA7'; // the app's logo blue (theme colors.primary), so emails match it exactly
 const INK = '#1D2A3A';
 const MUTED = '#5B6673';
 
@@ -71,77 +71,61 @@ function subjectFor({ customerName, isReissue }) {
         : 'You are a Feston Solar Super Hero';
 }
 
+/**
+ * What is attached, in one phrase (2026-10-23): "Solar Super Hero certificate",
+ * "... and warranty certificate for serial X", "... , warranty certificate and
+ * test report for serial X". The body is three lines; the files say the rest.
+ */
+function attachedPhrase({ warrantySerial, withReport }) {
+    if (!warrantySerial) return 'Solar Super Hero certificate';
+    return withReport
+        ? `Solar Super Hero certificate, warranty certificate and test report for serial ${warrantySerial}`
+        : `Solar Super Hero certificate and warranty certificate for serial ${warrantySerial}`;
+}
+
+/** Line 1: thanks (or "updated"), and what is attached. */
+function openingFor({ isReissue, warrantySerial, withReport }) {
+    const what = attachedPhrase({ warrantySerial, withReport });
+    const plural = Boolean(warrantySerial);
+    return isReissue
+        ? `Your ${what} ${plural ? 'are' : 'has been'} updated and attached.`
+        : `Thank you for choosing Feston. Your ${what} ${plural ? 'are' : 'is'} attached.`;
+}
+
 /** The plain-text alternative. Some people read mail this way; most filters do. */
-function textFor({ customerName, certificateNumber, co2Tonnes, trees, isReissue, pageUrl, warrantySerial }) {
+function textFor({ customerName, certificateNumber, co2Tonnes, trees, isReissue, pageUrl, warrantySerial, withReport = false }) {
     const who = firstName(customerName);
-    const opening = isReissue
-        ? 'Your Solar Super Hero certificate has been updated to include your latest Feston system.'
-        : 'Thank you for choosing Feston SEV. Your Solar Super Hero certificate is attached.';
     return [
         who ? `Hello ${who},` : 'Hello,',
         '',
-        opening,
+        openingFor({ isReissue, warrantySerial, withReport }),
+        `Your rooftop solar offsets about ${co2Tonnes} tonnes of CO2 a year, the same as planting ${trees} trees.`,
+        `You can also find ${warrantySerial ? 'them' : 'it'} any time in the Feston app.${pageUrl ? ` Portrait and story-size copies: ${pageUrl}` : ''}`,
         '',
-        `Your rooftop solar system offsets an estimated ${co2Tonnes} tonnes of CO2 every year —`,
-        `about the same as planting ${trees} trees.`,
-        '',
-        `Certificate number: ${certificateNumber}`,
-        '',
-        'The certificate is attached as an image you can share and a PDF you can print.',
-        ...(warrantySerial
-            ? [`The warranty certificate for your product (serial ${warrantySerial}) is attached too.`]
-            : []),
-        ...(pageUrl
-            ? ['A portrait copy and a 1080x1920 image for Instagram or WhatsApp status are here:', pageUrl]
-            : []),
-        'You can also find it any time in the Feston app, under your profile.',
-        '',
-        'Feston S.E.V Pvt. Ltd.',
-        FESTON_WEBSITE,
+        `Certificate No. ${certificateNumber} · Feston S.E.V Pvt. Ltd. · ${FESTON_WEBSITE}`,
     ].join('\n');
 }
 
-function htmlFor({ customerName, certificateNumber, co2Tonnes, trees, isReissue, pageUrl, warrantySerial }) {
+function htmlFor({ customerName, certificateNumber, co2Tonnes, trees, isReissue, pageUrl, warrantySerial, withReport = false }) {
     const who = escapeHtml(firstName(customerName));
-    const opening = isReissue
-        ? 'Your Solar Super Hero certificate has been updated to include your latest Feston system.'
-        : 'Thank you for choosing Feston SEV. Your Solar Super Hero certificate is attached.';
+    const opening = escapeHtml(openingFor({ isReissue, warrantySerial, withReport }));
 
     return `<!doctype html>
 <html lang="en">
 <body style="margin:0;padding:0;background:#FBF8F1;">
   <div style="max-width:560px;margin:0 auto;padding:32px 24px;font-family:'Segoe UI',Helvetica,Arial,sans-serif;color:${INK};">
-    <p style="font-size:16px;line-height:1.5;margin:0 0 16px;">
-      ${who ? `Hello ${who},` : 'Hello,'}
+    <p style="font-size:16px;line-height:1.5;margin:0 0 16px;">${who ? `Hello ${who},` : 'Hello,'}</p>
+    <h1 style="font-size:24px;line-height:1.25;font-weight:700;color:${BRAND};margin:0 0 16px;">You are a Solar Super Hero</h1>
+    <p style="font-size:16px;line-height:1.5;margin:0 0 8px;">${opening}</p>
+    <p style="font-size:16px;line-height:1.5;margin:0 0 8px;">
+      Your rooftop solar offsets about <strong style="color:${BRAND};">${escapeHtml(co2Tonnes)} tonnes of CO<sub>2</sub></strong> a year,
+      the same as planting <strong style="color:${BRAND};">${escapeHtml(trees)} trees</strong>.
     </p>
-    <h1 style="font-size:24px;line-height:1.25;font-weight:700;color:${BRAND};margin:0 0 16px;">
-      You are a Solar Super Hero
-    </h1>
-    <p style="font-size:16px;line-height:1.5;margin:0 0 20px;">${escapeHtml(opening)}</p>
-    <div style="border-top:1px solid rgba(232,134,42,0.55);border-bottom:1px solid rgba(232,134,42,0.55);padding:16px 0;margin:0 0 20px;">
-      <p style="font-size:16px;line-height:1.5;margin:0;">
-        Your rooftop solar system offsets an estimated
-        <strong style="color:${BRAND};">${escapeHtml(co2Tonnes)} tonnes of CO<sub>2</sub></strong>
-        every year, the same as planting about
-        <strong style="color:${BRAND};">${escapeHtml(trees)} trees</strong>.
-      </p>
-    </div>
-    <p style="font-size:15px;line-height:1.5;margin:0 0 20px;">
-      Your certificate is attached &mdash; a picture you can share, and a PDF you can print.
-      You will also find it any time in the Feston app, under your profile.
-    </p>${warrantySerial ? `
-    <p style="font-size:15px;line-height:1.5;margin:0 0 20px;">
-      The <strong>warranty certificate</strong> for your product (serial ${escapeHtml(warrantySerial)}) is attached as a PDF too.
-    </p>` : ''}${pageUrl ? `
-    <p style="font-size:15px;line-height:1.5;margin:0 0 20px;">
-      Want a portrait copy to frame, or a story-sized image for Instagram or WhatsApp status?
-      <a href="${escapeHtml(pageUrl)}" style="color:${BRAND};font-weight:600;">View and download your certificate online</a>.
-    </p>` : ''}
-    <p style="font-size:13px;line-height:1.5;color:${MUTED};margin:0 0 4px;">
-      Certificate No. ${escapeHtml(certificateNumber)}
+    <p style="font-size:16px;line-height:1.5;margin:0 0 20px;">
+      You can also find ${warrantySerial ? 'them' : 'it'} any time in the Feston app.${pageUrl ? ` <a href="${escapeHtml(pageUrl)}" style="color:${BRAND};font-weight:600;">Portrait and story-size copies</a>.` : ''}
     </p>
     <p style="font-size:13px;line-height:1.5;color:${MUTED};margin:0;">
-      Feston S.E.V Pvt. Ltd. &middot; <a href="${FESTON_WEBSITE}" style="color:${BRAND};">festonsev.com</a>
+      Certificate No. ${escapeHtml(certificateNumber)} &middot; Feston S.E.V Pvt. Ltd. &middot; <a href="${FESTON_WEBSITE}" style="color:${BRAND};">festonsev.com</a>
     </p>
   </div>
 </body>
@@ -173,7 +157,8 @@ function buildMailDocument({
     if (!recipient) throw new Error('hero mail: a recipient address is required');
 
     const warrantySerial = warranty && warranty.url ? String(warranty.serial || '') || '-' : '';
-    const facts = { customerName, certificateNumber, co2Tonnes, trees, isReissue, pageUrl, warrantySerial };
+    const withReport = Boolean(warranty && warranty.url && warranty.testReportUrl);
+    const facts = { customerName, certificateNumber, co2Tonnes, trees, isReissue, pageUrl, warrantySerial, withReport };
     const attachments = [];
     if (pngUrl) {
         attachments.push({ filename: `${certificateNumber}.png`, path: pngUrl });
@@ -183,6 +168,10 @@ function buildMailDocument({
     }
     if (warranty && warranty.url) {
         attachments.push({ filename: warranty.filename, path: warranty.url });
+    }
+    // The factory test report, issued with the warranty (2026-10-23).
+    if (warranty && warranty.testReportUrl) {
+        attachments.push({ filename: warranty.testReportFilename || 'Test-Report.pdf', path: warranty.testReportUrl });
     }
 
     const doc = {
@@ -203,32 +192,32 @@ function buildMailDocument({
  * warranty certificate but the hero certificate has nothing new to say — its
  * figures did not move, so there is no hero email to attach it to.
  */
-function buildWarrantyMailDocument({ to, customerName, serialnumber, url, filename }) {
+function buildWarrantyMailDocument({ to, customerName, serialnumber, url, filename, testReportUrl = '', testReportFilename = '' }) {
     const recipient = String(to || '').trim();
     if (!recipient) throw new Error('warranty mail: a recipient address is required');
     const who = firstName(customerName);
     const serial = String(serialnumber || '').trim() || '-';
+    const withReport = Boolean(testReportUrl);
+    const what = withReport ? 'warranty certificate and factory test report' : 'warranty certificate';
     const text = [
         who ? `Hello ${who},` : 'Hello,',
         '',
-        'Thank you for registering your Feston product.',
-        `Your warranty certificate for serial ${serial} is attached as a PDF you can save and print.`,
-        'You can also find it any time in the Feston app, under the product.',
+        `Thank you for registering your Feston product. Your ${what} for serial ${serial} ${withReport ? 'are' : 'is'} attached.`,
+        `You can also find ${withReport ? 'them' : 'it'} any time in the Feston app, under the product.`,
         '',
-        'Feston S.E.V Pvt. Ltd.',
-        FESTON_WEBSITE,
+        `Feston S.E.V Pvt. Ltd. · ${FESTON_WEBSITE}`,
     ].join('\n');
     const html = `<!doctype html>
 <html lang="en">
 <body style="margin:0;padding:0;background:#FBF8F1;">
   <div style="max-width:560px;margin:0 auto;padding:32px 24px;font-family:'Segoe UI',Helvetica,Arial,sans-serif;color:${INK};">
     <p style="font-size:16px;line-height:1.5;margin:0 0 16px;">${who ? `Hello ${escapeHtml(who)},` : 'Hello,'}</p>
-    <h1 style="font-size:24px;line-height:1.25;font-weight:700;color:${BRAND};margin:0 0 16px;">Your warranty certificate</h1>
-    <p style="font-size:16px;line-height:1.5;margin:0 0 20px;">
-      Thank you for registering your Feston product. The warranty certificate for serial
-      <strong style="color:${BRAND};">${escapeHtml(serial)}</strong> is attached as a PDF you can save and print.
+    <h1 style="font-size:24px;line-height:1.25;font-weight:700;color:${BRAND};margin:0 0 16px;">Your ${withReport ? 'warranty certificate and test report' : 'warranty certificate'}</h1>
+    <p style="font-size:16px;line-height:1.5;margin:0 0 8px;">
+      Thank you for registering your Feston product. Your ${escapeHtml(what)} for serial
+      <strong style="color:${BRAND};">${escapeHtml(serial)}</strong> ${withReport ? 'are' : 'is'} attached.
     </p>
-    <p style="font-size:15px;line-height:1.5;margin:0 0 20px;">You can also find it any time in the Feston app, under the product.</p>
+    <p style="font-size:16px;line-height:1.5;margin:0 0 20px;">You can also find ${withReport ? 'them' : 'it'} any time in the Feston app, under the product.</p>
     <p style="font-size:13px;line-height:1.5;color:${MUTED};margin:0;">Feston S.E.V Pvt. Ltd. &middot; <a href="${FESTON_WEBSITE}" style="color:${BRAND};">festonsev.com</a></p>
   </div>
 </body>
@@ -239,7 +228,10 @@ function buildWarrantyMailDocument({ to, customerName, serialnumber, url, filena
             subject: who ? `${who}, your Feston warranty certificate` : 'Your Feston warranty certificate',
             text,
             html,
-            attachments: url ? [{ filename, path: url }] : [],
+            attachments: [
+                ...(url ? [{ filename, path: url }] : []),
+                ...(testReportUrl ? [{ filename: testReportFilename || 'Test-Report.pdf', path: testReportUrl }] : []),
+            ],
         },
     };
     if (HERO_MAIL_FROM) doc.from = HERO_MAIL_FROM;

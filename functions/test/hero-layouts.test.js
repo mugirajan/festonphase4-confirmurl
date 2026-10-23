@@ -159,7 +159,7 @@ test('the mail links to the certificate page when it has one, and still attaches
     assert.equal(doc.message.attachments.length, 2);
     assert.ok(doc.message.html.includes('action=hero&amp;n=FSV-SSH-2026-00041'));
     assert.ok(doc.message.text.includes('action=hero&n=FSV-SSH-2026-00041'));
-    assert.match(doc.message.html, /1080x1920|story-sized/);
+    assert.match(doc.message.html, /story-size/);
 });
 
 test('the page url is on the confirm function, so it exists wherever the confirm page does', () => {

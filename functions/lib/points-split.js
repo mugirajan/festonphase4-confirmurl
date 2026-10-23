@@ -221,7 +221,8 @@ async function awardSplit({ firestore, verifyIdToken, authorization, body, now, 
             pointsUpdatedAt: now(),
         });
         tx.set(firestore.collection('installer_points').doc(), {
-            installerId: installerUid,
+            installerId: installerSnap.id,
+            installerUid,
             installerName: member.name,
             companyId: split.companyId,
             // The install's own award, shared: same action as a single-engineer

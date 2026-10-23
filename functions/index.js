@@ -34,7 +34,7 @@ admin.initializeApp();
 const { LOGO_URL, linkFor, FIREBASE_WEB_CONFIG, OTP_ENABLED, OTP_TEST_MODE } = require('./lib/config');
 const { isValidToken } = require('./lib/tokens');
 const { isExpired } = require('./lib/expiry');
-const { buildDetailsFromRegistration, hasAnyDetail } = require('./lib/snapshot');
+const { buildDetailsFromRegistration, hasAnyDetail, installPhotosFrom } = require('./lib/snapshot');
 const { renderPendingPage, renderConfirmedPage, renderUnavailablePage } = require('./lib/page');
 const store = require('./lib/store');
 
@@ -83,6 +83,9 @@ const SPLIT_ACTIONS = {
     'company-heroes': require('./lib/company-certificates').listCompanyHeroCertificates,
     // The app's GPS step: the written address at the pin, from Google Geocoding.
     'reverse-geocode': require('./lib/reverse-geocode').reverseGeocode,
+    // "Forgot your password?": the reset link, emailed by us from Feston Care.
+    // No ID token — the caller has no password. The handler checks nothing else.
+    'password-reset': require('./lib/password-reset').passwordReset,
     'split-award': pointsSplit.awardSplit,
     notifications: pointsSplit.listNotifications,
     'notifications-read': pointsSplit.markNotificationsRead,
@@ -320,6 +323,9 @@ async function handlePage(res, token) {
         200,
         renderPendingPage({
             details,
+            // The engineer's photos of the install (2026-10-23), so the
+            // customer confirms what they can see, not only what they read.
+            photos: installPhotosFrom(pending),
             expiresAt: pending.expiresAt,
             actionUrl: linkFor(token),
             token,

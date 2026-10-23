@@ -677,7 +677,8 @@ async function completeRegistration(token, { userAgent, verifiedPhone, requirePh
                 pointsUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
             });
             tx.set(firestore.collection('installer_points').doc(), {
-                installerId,
+                installerId: installerRef.id,
+                installerUid: installerId,
                 companyId: awardCompanyId,
                 action: award.action,
                 points: award.points,
@@ -690,7 +691,8 @@ async function completeRegistration(token, { userAgent, verifiedPhone, requirePh
 
         if (installerRef && awardPoints > 0 && !holdForSplit) {
             tx.set(firestore.collection('installer_points').doc(), {
-                installerId,
+                installerId: installerRef.id,
+                installerUid: installerId,
                     companyId: awardCompanyId,
                 // The ledger key stays `complete_registration`: it is what every
                 // row ever written carries, and the portal's history labels it.

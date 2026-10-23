@@ -151,8 +151,8 @@ test('the hero email carries the warranty PDF as a third attachment', () => {
         doc.message.attachments.map((a) => a.filename),
         ['FSH-2026-000001.png', 'FSH-2026-000001.pdf', 'Warranty-2209040013.pdf'],
     );
-    assert.match(doc.message.text, /warranty certificate for your product \(serial 2209040013\)/);
-    assert.match(doc.message.html, /warranty certificate<\/strong> for your product/);
+    assert.match(doc.message.text, /and warranty certificate for serial 2209040013 are attached/);
+    assert.match(doc.message.html, /and warranty certificate for serial 2209040013 are attached/);
 
     const without = buildMailDocument({
         to: 'kamal@example.com',

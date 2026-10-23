@@ -80,6 +80,14 @@ function styles() {
       margin-top: 20px;
     }
     .section + .section { margin-top: 26px; }
+    /* Install photos (2026-10-23): a grid of thumbnails, each opening full size. */
+    .photos-note { margin: -6px 0 12px; font-size: 13px; color: var(--ink-muted); }
+    .photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; }
+    .photos a { display: block; text-decoration: none; color: var(--ink-muted); font-size: 12px; }
+    .photos img {
+      display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover;
+      border-radius: 8px; border: 1px solid var(--hairline); margin-bottom: 6px; background: #f3f4f6;
+    }
     /* Section headings were 13px semibold on a hairline — the same weight as the
        values beneath them, so the page read as one undifferentiated list. Exo 2
        at 16 with a short brand rule gives the eye somewhere to land. */
@@ -237,6 +245,27 @@ function renderBlock(block) {
         </dl>`;
 }
 
+/** The engineer's photos of the install, as a thumbnail grid; nothing when there are none. */
+function renderPhotos(photos) {
+    const list = Array.isArray(photos) ? photos.filter((p) => p && /^https:\/\//i.test(String(p.url || ''))) : [];
+    if (!list.length) return '';
+    return `
+      <div class="section">
+        <h2 class="section-title">Installation photos</h2>
+        <p class="photos-note">Taken by the engineer at your site. Tap one to see it full size.</p>
+        <div class="photos">
+          ${list
+              .map(
+                  (p) => `<a href="${escapeHtml(p.url)}" target="_blank" rel="noopener">
+            <img src="${escapeHtml(p.url)}" alt="${escapeHtml(p.label)}" loading="lazy" />
+            <span>${escapeHtml(p.label)}</span>
+          </a>`,
+              )
+              .join('\n          ')}
+        </div>
+      </div>`;
+}
+
 function renderSections(details) {
     return toDisplaySections(details)
         .map(
@@ -296,7 +325,7 @@ function maskPhone(e164) {
  * OTP off it posts straight away. The countdown is a courtesy — the real expiry
  * is re-checked on the server when the request lands.
  */
-function renderPendingPage({ details, expiresAt, actionUrl, token, logoUrl, otpEnabled, otpTestMode, phoneE164, firebaseConfig, marketingPreset = false }) {
+function renderPendingPage({ details, photos = [], expiresAt, actionUrl, token, logoUrl, otpEnabled, otpTestMode, phoneE164, firebaseConfig, marketingPreset = false }) {
     const remaining = secondsRemaining(expiresAt);
     const otp = !!otpEnabled && !!phoneE164;
     const masked = maskPhone(phoneE164);
@@ -317,6 +346,7 @@ two required boxes, and confirm — your warranty starts the moment you do.</p>
 
 <div class="card" id="details-card">
 ${renderSections(details)}
+${renderPhotos(photos)}
 </div>
 
 <div class="actions" id="action-area">

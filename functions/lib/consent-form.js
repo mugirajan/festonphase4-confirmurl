@@ -17,7 +17,7 @@
  */
 
 const { staffFromToken } = require('./verbal-consent');
-const { buildDetailsFromRegistration, toDisplaySections, hasAnyDetail } = require('./snapshot');
+const { buildDetailsFromRegistration, toDisplaySections, hasAnyDetail, installPhotosFrom } = require('./snapshot');
 const { isExpired } = require('./expiry');
 
 const str = (v) => (typeof v === 'string' ? v.trim() : '');
@@ -60,6 +60,8 @@ async function consentForm({ firestore, verifyIdToken, authorization, body, load
             expired: isExpired(pending.expiresAt),
             hasDetails: hasAnyDetail(details),
             sections: toDisplaySections(details),
+            // The engineer's photos, as on the customer's page (2026-10-23).
+            photos: installPhotosFrom(pending),
             confirmations: CONFIRMATIONS,
         },
     };

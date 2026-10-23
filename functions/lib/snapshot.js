@@ -458,8 +458,33 @@ function toDisplaySections(details) {
     return sections.filter((s) => s.rows.length > 0);
 }
 
+/**
+ * The engineer's photos of the install (2026-10-23), for the customer's
+ * confirm page and Feston's consent call: what was fitted, where, and the
+ * logger — so "is this right?" can be answered by looking, not only reading.
+ * Only https URLs survive (the app stores Storage download links); an empty
+ * or missing field is simply left out.
+ */
+const PHOTO_FIELDS = [
+    ['installationPhoto1Url', 'Installation photo 1'],
+    ['installationPhoto2Url', 'Installation photo 2'],
+    ['installationPhotoUrl', 'Installation photo'],
+    ['addressProofUrl', 'Address proof'],
+    ['wifiLoggerPhotoUrl', 'Wi-Fi logger'],
+    ['ebBillPhotoUrl', 'EB bill'],
+    ['appActivatedPhotoUrl', 'App activated'],
+    ['invoiceUrl', 'Invoice'],
+];
+
+function installPhotosFrom(data = {}) {
+    return PHOTO_FIELDS.map(([field, label]) => ({ label, url: asString(data[field]) })).filter((p) =>
+        /^https:\/\//i.test(p.url),
+    );
+}
+
 module.exports = {
     buildDetailsFromRegistration,
+    installPhotosFrom,
     normaliseTeam,
     normaliseDetails,
     mergeDetails,

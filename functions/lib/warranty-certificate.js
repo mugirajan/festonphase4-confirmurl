@@ -381,6 +381,7 @@ function warrantyFilename(serialnumber) {
 
 module.exports = {
     PAGE,
+    familyOf,
     PLAN,
     detailFrom,
     warrantyFields,

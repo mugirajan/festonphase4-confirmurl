@@ -42,6 +42,15 @@ const { renderLayout } = require('./hero-render');
 const str = (v) => (typeof v === 'string' ? v.trim() : '');
 
 /**
+ * The certificate DESIGN's version (2026-10-23). Bump it whenever the
+ * templates change in a way issued certificates should pick up — a certificate
+ * rendered with an older layout is re-rendered on its next issue even when the
+ * customer's figures are unchanged. 2 = the product line-up image under the
+ * impact sentence.
+ */
+const LAYOUT_VERSION = 2;
+
+/**
  * The customer's name and email for the certificate.
  *
  * Taken from the REGISTRATIONS, newest first, rather than from a profile row.
@@ -124,7 +133,8 @@ async function plan(firestore, uid, registrations) {
             existing.status === 'ready' &&
             str(existing.customerName) === identity.name &&
             Number(existing.capacityKw) === impact.capacityKw &&
-            Number(existing.co2Tonnes) === impact.co2Tonnes;
+            Number(existing.co2Tonnes) === impact.co2Tonnes &&
+            Number(existing.layout) === LAYOUT_VERSION;
 
         if (unchanged) {
             return { action: 'skip', reason: 'unchanged', certificate: { uid, ...existing } };
@@ -146,6 +156,7 @@ async function plan(firestore, uid, registrations) {
             registrationIds: registrations.map((r) => r.id),
             registrationCount: registrations.length,
             version,
+            layout: LAYOUT_VERSION,
             // Marked as rendering BEFORE Chrome is touched, so no reader ever
             // sees a certificate whose figures have moved past its files.
             status: 'rendering',

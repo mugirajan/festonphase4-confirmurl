@@ -259,3 +259,21 @@ test('a malformed team entry is dropped and an unknown role reads as "Worked on"
     assert.equal(team[0].role, 'worked');
     assert.deepEqual(normaliseTeam('not a list'), []);
 });
+
+// The engineer's install photos for the customer page and the consent call (2026-10-23).
+test('installPhotosFrom keeps only the https photo links, in a fixed order with labels', () => {
+    const { installPhotosFrom } = require('../lib/snapshot');
+    const photos = installPhotosFrom({
+        wifiLoggerPhotoUrl: 'https://x/logger.jpg',
+        installationPhoto1Url: 'https://x/one.jpg',
+        addressProofUrl: '',
+        ebBillPhotoUrl: 'not-a-url',
+        invoiceUrl: 'https://x/inv.jpg',
+    });
+    assert.deepStrictEqual(photos, [
+        { label: 'Installation photo 1', url: 'https://x/one.jpg' },
+        { label: 'Wi-Fi logger', url: 'https://x/logger.jpg' },
+        { label: 'Invoice', url: 'https://x/inv.jpg' },
+    ]);
+    assert.deepStrictEqual(installPhotosFrom({}), []);
+});

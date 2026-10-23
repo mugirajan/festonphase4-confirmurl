@@ -174,6 +174,9 @@ const HERO_EMAIL_ENABLED = process.env.HERO_EMAIL_ENABLED !== 'false';
 const WARRANTY_ENABLED = process.env.WARRANTY_ENABLED !== 'false';
 const WARRANTY_COLLECTION = process.env.WARRANTY_COLLECTION || 'warranty_certificates';
 const WARRANTY_STORAGE_PREFIX = process.env.WARRANTY_STORAGE_PREFIX || 'warranty-certificates';
+/** The factory test report issued with the warranty (2026-10-23), emailed alongside it. */
+const TEST_REPORT_COLLECTION = process.env.TEST_REPORT_COLLECTION || 'test_reports';
+const TEST_REPORT_STORAGE_PREFIX = process.env.TEST_REPORT_STORAGE_PREFIX || 'test-reports';
 
 /**
  * Google Geocoding API key for `?action=reverse-geocode` (2026-10-22): the
@@ -210,5 +213,7 @@ module.exports = {
     WARRANTY_ENABLED,
     WARRANTY_COLLECTION,
     WARRANTY_STORAGE_PREFIX,
+    TEST_REPORT_COLLECTION,
+    TEST_REPORT_STORAGE_PREFIX,
     GEOCODING_API_KEY,
 };
