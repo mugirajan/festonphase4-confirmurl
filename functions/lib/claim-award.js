@@ -361,7 +361,10 @@ async function installPoints({ firestore, verifyIdToken, authorization, body, lo
         const pts = credit(d);
         earnedTotal += pts;
         if (str(r.installerId) === uid) myTotal += pts;
-        const label = ACTION_LABELS[action] || (PHOTO_RULES[action] && PHOTO_RULES[action].label) || action || 'Points';
+        // A photo reward is listed once, in `rules` below as earned (2026-10-27);
+        // listing it here too showed the same reward twice after one upload.
+        if (PHOTO_RULES[action]) continue;
+        const label = ACTION_LABELS[action] || action || 'Points';
         earnedByAction.set(label, (earnedByAction.get(label) || 0) + pts);
     }
     // An action whose credits were all taken back nets to nothing and is not
@@ -386,8 +389,10 @@ async function installPoints({ firestore, verifyIdToken, authorization, body, lo
             firestore.collection(CLAIMS_COLLECTION).where('awardKey', '==', awardKey).limit(10).get(),
         ]);
         const held = claims.docs.some((c) => (str((c.data() || {}).status).toLowerCase() || 'pending') !== 'rejected');
-        const done = netCredits(paid) > 0 || held;
-        rules.push({ kind, label: rule.label, points, subject: rule.subject, status: done ? 'earned' : 'available' });
+        const paidPoints = netCredits(paid);
+        const done = paidPoints > 0 || held;
+        // Earned: what was actually paid, not today's configured value.
+        rules.push({ kind, label: rule.label, points: paidPoints > 0 ? paidPoints : points, subject: rule.subject, status: done ? 'earned' : 'available' });
         if (!done) availableTotal += points;
     }
 

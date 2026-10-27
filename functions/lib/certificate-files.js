@@ -125,4 +125,4 @@ async function certificateFile({
     };
 }
 
-module.exports = { certificateFile, isIssued };
+module.exports = { certificateFile, isIssued, callerFrom };

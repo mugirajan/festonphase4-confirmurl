@@ -310,6 +310,21 @@ test('install points: what was earned on this install, and which photo rewards a
     assert.equal(r.body.availableTotal, 50 + 200);
 });
 
+test('install points: a photo paid on this install is listed once, as the earned rule row', async () => {
+    const s = seed();
+    s.points_config.eb_bill_before_after = { points: 75, active: true };
+    s.installer_points = {
+        l1: { installerId: 'uid_sub', registrationId: 'reg1', action: 'complete_registration', points: 150, type: 'credit' },
+        l2: { installerId: 'uid_sub', registrationId: 'reg1', action: 'eb_bill_before_after', points: 50, type: 'credit', awardKey: 'eb_bill_before_after:cust:cust1' },
+    };
+    const r = await summary(fakeFirestore(s), 'tok-sub');
+    assert.equal(r.status, 200);
+    assert.equal(r.body.earnedTotal, 200);
+    assert.deepEqual(r.body.earned, [{ label: 'Install points', points: 150 }], 'the EB bill is not repeated here');
+    const eb = r.body.rules.find((x) => x.kind === 'eb_bill_before_after');
+    assert.deepEqual({ status: eb.status, points: eb.points }, { status: 'earned', points: 50 }, 'shows what was paid, not the new rate');
+});
+
 test('install points: an award taken back is neither listed as earned nor marked done', async () => {
     const s = seed();
     s.points_config.eb_bill_before_after = { points: 50, active: true };

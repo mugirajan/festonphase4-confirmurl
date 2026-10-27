@@ -253,6 +253,29 @@ exports.confirm = functions.https.onRequest((req, res) => {
             }
         }
 
+        // Company submissions for Feston staff (2026-10-27): list, approve,
+        // reject, reopen through the service while the Firestore rule for the
+        // collection is not published. ID token required; staff only.
+        if (req.method === 'POST' && action === 'company-submissions') {
+            try {
+                const body = (req.body && typeof req.body === 'object') ? req.body : {};
+                const result = await require('./lib/company-submission-admin').companySubmissionAction({
+                    firestore: admin.firestore(),
+                    verifyIdToken: (t) => admin.auth().verifyIdToken(t),
+                    authorization: req.get('authorization'),
+                    op: asString(body.op),
+                    submissionId: asString(body.submissionId),
+                    patch: (body.patch && typeof body.patch === 'object') ? body.patch : {},
+                    now: () => admin.firestore.Timestamp.now(),
+                    logger: functions.logger,
+                });
+                return sendJson(res, result.status, result.body);
+            } catch (error) {
+                functions.logger.error('company-submissions failed', error);
+                return sendJson(res, 500, { status: 'error', message: 'Could not read company submissions.' });
+            }
+        }
+
         // Multi-engineer installs (2026-10-22): the company admin divides the
         // held install points, and each engineer reads their notifications.
         // ID token required on all four; see lib/points-split.js.
