@@ -63,6 +63,23 @@ function awardKeyFor(ruleKey, rule, { registrationId, customerId }) {
 }
 
 /** One document per award: the id is the key's hash, so a second payment collides. */
+/**
+ * What a set of ledger rows for one award still pays: credits minus debits
+ * (2026-10-26). A photo award Feston took back leaves its credit row and a
+ * debit row with the same awardKey; counting the credit alone read as "still
+ * earned", so the install summary showed it as earned and a correct photo
+ * could not earn it again.
+ */
+function netCredits(snap) {
+    let net = 0;
+    for (const d of snap.docs) {
+        const r = d.data() || {};
+        const pts = Number(r.points) || 0;
+        net += str(r.type) === 'debit' ? -pts : pts;
+    }
+    return net;
+}
+
 function claimIdFor(awardKey) {
     return 'auto_' + crypto.createHash('sha256').update(awardKey).digest('hex').slice(0, 40);
 }
@@ -151,12 +168,15 @@ async function awardPhotoClaim({ firestore, verifyIdToken, authorization, body, 
         // photo from the wizard, paid at confirm by lib/store.js.
         const ledgerName = rule.subject === 'company' ? 'company_points' : 'installer_points';
         const paidElsewhere = await tx.get(
-            firestore.collection(ledgerName).where('awardKey', '==', awardKey).limit(1),
+            firestore.collection(ledgerName).where('awardKey', '==', awardKey).limit(10),
         );
 
         const held = manual.docs.map((d) => str((d.data() || {}).status).toLowerCase() || 'pending').filter((s) => s !== 'rejected');
         const subject = rule.scope === 'per-install-once' ? 'install' : 'customer';
-        if (claimSnap.exists || held.includes('approved') || !paidElsewhere.empty) {
+        // This route's own claim holds the award unless Feston rejected it (a
+        // take-back); then the award is open again for a correct photo.
+        const ownClaimHolds = claimSnap.exists && str((claimSnap.data() || {}).status).toLowerCase() !== 'rejected';
+        if (ownClaimHolds || held.includes('approved') || netCredits(paidElsewhere) > 0) {
             return reply(200, { status: 'already-paid', label: rule.label, message: `"${rule.label}" has already been credited for this ${subject}.` });
         }
         if (held.length) {
@@ -344,7 +364,9 @@ async function installPoints({ firestore, verifyIdToken, authorization, body, lo
         const label = ACTION_LABELS[action] || (PHOTO_RULES[action] && PHOTO_RULES[action].label) || action || 'Points';
         earnedByAction.set(label, (earnedByAction.get(label) || 0) + pts);
     }
-    const earned = [...earnedByAction.entries()].map(([label, points]) => ({ label, points }));
+    // An action whose credits were all taken back nets to nothing and is not
+    // "earned"; it is left out rather than shown as a dash.
+    const earned = [...earnedByAction.entries()].map(([label, points]) => ({ label, points })).filter((e) => e.points > 0);
 
     // Each photo reward: earned already (here or for this customer elsewhere),
     // or open — with what it is worth now.
@@ -360,11 +382,11 @@ async function installPoints({ firestore, verifyIdToken, authorization, body, lo
         if (!awardKey) continue;
         const ledgerName = rule.subject === 'company' ? 'company_points' : 'installer_points';
         const [paid, claims] = await Promise.all([
-            firestore.collection(ledgerName).where('awardKey', '==', awardKey).limit(1).get(),
+            firestore.collection(ledgerName).where('awardKey', '==', awardKey).limit(10).get(),
             firestore.collection(CLAIMS_COLLECTION).where('awardKey', '==', awardKey).limit(10).get(),
         ]);
         const held = claims.docs.some((c) => (str((c.data() || {}).status).toLowerCase() || 'pending') !== 'rejected');
-        const done = !paid.empty || held;
+        const done = netCredits(paid) > 0 || held;
         rules.push({ kind, label: rule.label, points, subject: rule.subject, status: done ? 'earned' : 'available' });
         if (!done) availableTotal += points;
     }

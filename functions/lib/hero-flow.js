@@ -26,6 +26,7 @@ const {
     MAIL_COLLECTION,
     WARRANTY_ENABLED,
     heroPageUrl,
+    REGISTRATIONS_COLLECTION,
 } = require('./config');
 const { loadRegistrations, plan, render, signedUrl, millisOf, bucket } = require('./hero-issue');
 const { buildMailDocument, buildWarrantyMailDocument } = require('./hero-mail');
@@ -77,9 +78,87 @@ async function issueForUser(uid, { logger = console, registrationId = '', regist
         }
     }
 
+    // A Feston battery's own row (2026-10-27): its certificates are issued
+    // above, but the hero certificate and the email belong to the inverter's
+    // flow, which attaches them. Nothing more to do here.
+    if (registration && registration.parentRegistrationId) {
+        if (warrantyError) throw warrantyError;
+        return { action: 'skip', reason: 'battery-row', warranty: warranty ? warranty.pdfPath : null };
+    }
+
+    // The batteries installed with this inverter: one certificate each, carried
+    // in the same email as the inverter's.
+    if (warranty && registrationId) {
+        warranty.extras = await issueBatteryCertificates(firestore, registrationId, logger);
+    }
+
     const result = await issueHero(firestore, uid, warranty, logger);
     if (warrantyError) throw warrantyError;
     return { ...result, warranty: warranty ? warranty.pdfPath : null };
+}
+
+/**
+ * The warranty certificate and test report of every Feston battery row under
+ * an inverter's registration (store.js writes them in the same transaction).
+ * Idempotent like the inverter's own; a battery already emailed is left out.
+ */
+async function issueBatteryCertificates(firestore, parentRegistrationId, logger) {
+    const extras = [];
+    let snap;
+    try {
+        snap = await firestore
+            .collection(REGISTRATIONS_COLLECTION)
+            .where('parentRegistrationId', '==', parentRegistrationId)
+            .get();
+    } catch (error) {
+        logger.error('battery certificates: could not list the battery rows', {
+            parentRegistrationId,
+            error: String(error && error.message ? error.message : error),
+        });
+        return extras;
+    }
+    for (const d of snap.docs) {
+        const row = d.data() || {};
+        try {
+            const w = await issueWarranty(firestore, d.id, row, { renderLayout, bucket });
+            if (w.emailedAt) continue;
+            let testReport = null;
+            try {
+                testReport = await issueTestReport(firestore, d.id, row, { renderLayout, bucket });
+            } catch (error) {
+                logger.error('battery test report: could not issue', { registrationId: d.id, error: String(error && error.message ? error.message : error) });
+            }
+            extras.push({
+                registrationId: d.id,
+                serialnumber: w.serialnumber,
+                pdfPath: w.pdfPath,
+                testReportPath: testReport && testReport.pdfPath ? testReport.pdfPath : '',
+            });
+        } catch (error) {
+            logger.error('battery warranty certificate: could not issue', { registrationId: d.id, error: String(error && error.message ? error.message : error) });
+        }
+    }
+    return extras;
+}
+
+/** Signed URLs for the battery certificates, in the shape the mail builders take. */
+async function extrasForMail(extras) {
+    const out = [];
+    for (const e of extras || []) {
+        const [url, testReportUrl] = await Promise.all([
+            signedUrl(e.pdfPath),
+            e.testReportPath ? signedUrl(e.testReportPath) : Promise.resolve(''),
+        ]);
+        out.push({
+            registrationId: e.registrationId,
+            serial: e.serialnumber,
+            url,
+            filename: warrantyFilename(e.serialnumber),
+            testReportUrl,
+            testReportFilename: testReportFilename(e.serialnumber),
+        });
+    }
+    return out;
 }
 
 /** The hero certificate itself; `warranty` (or null) rides along in its email. */
@@ -187,6 +266,8 @@ async function queueEmail(firestore, certificate, files, action, logger, warrant
             attachWarranty ? signedUrl(warranty.pdfPath) : Promise.resolve(''),
             testReportPath ? signedUrl(testReportPath) : Promise.resolve(''),
         ]);
+        // The batteries' certificates ride along with the inverter's (2026-10-27).
+        const extras = attachWarranty ? await extrasForMail(warranty.extras) : [];
         const mailRef = await firestore.collection(MAIL_COLLECTION).add({
             ...buildMailDocument({
                 to,
@@ -207,6 +288,7 @@ async function queueEmail(firestore, certificate, files, action, logger, warrant
                           testReportFilename: testReportFilename(warranty.serialnumber),
                       }
                     : null,
+                extras,
             }),
             // Ours, not the extension's. Lets a support query answer "was this
             // customer sent their certificate, and which version".
@@ -217,6 +299,7 @@ async function queueEmail(firestore, certificate, files, action, logger, warrant
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
         });
         if (warrantyUrl) await markEmailed(firestore, warranty.registrationId);
+        for (const e of extras) await markEmailed(firestore, e.registrationId);
 
         // Queue first, then drain. The document is the audit trail — when a
         // customer says they never got their certificate, `delivery.state` says
@@ -256,6 +339,22 @@ async function queueWarrantyEmail(firestore, warranty, logger) {
     try {
         const url = await signedUrl(warranty.pdfPath);
         const testReportUrl = warranty.testReport && warranty.testReport.pdfPath ? await signedUrl(warranty.testReport.pdfPath) : '';
+        const extras = await extrasForMail(warranty.extras);
+        // The customer's Super Hero certificate, when they have one (2026-10-27).
+        let hero = null;
+        try {
+            const h = await firestore.collection(HERO_COLLECTION).doc(String(warranty.uid || '')).get();
+            const d = h.exists ? h.data() || {} : null;
+            if (d && d.status === 'ready' && d.pdfPath) {
+                hero = {
+                    number: String(d.certificateNumber || ''),
+                    pngUrl: d.pngPath ? await signedUrl(d.pngPath) : '',
+                    pdfUrl: await signedUrl(d.pdfPath),
+                };
+            }
+        } catch (error) {
+            logger.warn('warranty email: could not attach the hero certificate', { error: String(error && error.message ? error.message : error) });
+        }
         const mailRef = await firestore.collection(MAIL_COLLECTION).add({
             ...buildWarrantyMailDocument({
                 to,
@@ -265,11 +364,14 @@ async function queueWarrantyEmail(firestore, warranty, logger) {
                 filename: warrantyFilename(warranty.serialnumber),
                 testReportUrl,
                 testReportFilename: testReportFilename(warranty.serialnumber),
+                extras,
+                hero,
             }),
             warrantyRegistrationId: warranty.registrationId,
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
         });
         await markEmailed(firestore, warranty.registrationId);
+        for (const e of extras) await markEmailed(firestore, e.registrationId);
         const sent = await mailer.sendQueued(mailRef.id);
         if (!sent.sent && sent.reason === 'error') {
             logger.warn('warranty certificate: the email failed to send', {

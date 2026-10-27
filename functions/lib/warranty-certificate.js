@@ -32,7 +32,7 @@ const BRAND = '#055CA7';
 const GOLD = '#B4964E';
 const NAVY = '#0E1E42';
 
-/** The app's WARRANTY_YEARS and warrantyPlan(), the same for every family. */
+/** The app's warrantyPlan(): the type and site are fixed, the years come from the row. */
 const PLAN = {
     years: 10,
     type: 'Standard warranty',
@@ -40,8 +40,48 @@ const PLAN = {
     website: 'www.festonsev.com',
 };
 
+/** The "Warranty Length" line for a duration (the app's warrantyLengthText). */
+const lengthText = (years) => (years === 10 ? PLAN.length : `${years} Years Standard`);
+
+/**
+ * Warranty years (Feston, 2026-10-27; the app's data/warranty.ts):
+ *   hybrid HV with a Feston battery 10 · hybrid HV without one 5 ·
+ *   hybrid LV 10 · a Feston battery row 5 · on-grid / micro 10.
+ * The stamped `warrantyYears` wins; a row from before the stamp is read from
+ * the gap between its dates, else from the rule.
+ */
+function warrantyYearsOf(row) {
+    if (typeof row.warrantyYears === 'number' && row.warrantyYears > 0) return row.warrantyYears;
+    const start = toDateString(row.installationDate);
+    const end = toDateString(row.warrantyEndDate);
+    if (start && end) {
+        const years = Math.round((Date.parse(end) - Date.parse(start)) / (365.25 * 24 * 3600 * 1000));
+        if (years > 0) return years;
+    }
+    return ruleYearsFor(row);
+}
+
+/** The rule alone, from what the row says — used at confirm to stamp a row that has no years. */
+function ruleYearsFor(row) {
+    const family = familyOf(row);
+    if (family === 'batteries') return 5;
+    const hv = (str(row.submodel) || str(row.productsubtype)).toUpperCase() === 'HV';
+    const b = row.batteryDetails && typeof row.batteryDetails === 'object' ? row.batteryDetails : {};
+    const hasFestonBattery = b.purchased === true && str(b.brand) === 'feston';
+    return family === 'hybrid' && hv && !hasFestonBattery ? 5 : PLAN.years;
+}
+
+/** installationDate + years as a Date, or null when the date does not parse. */
+function warrantyEndFor(installationDate, years) {
+    const raw = installationDate && typeof installationDate.toDate === 'function' ? installationDate.toDate() : installationDate;
+    const d = raw instanceof Date ? new Date(raw.getTime()) : typeof raw === 'string' && raw ? new Date(raw) : null;
+    if (!d || Number.isNaN(d.getTime())) return null;
+    d.setFullYear(d.getFullYear() + years);
+    return d;
+}
+
 /** A4 portrait, the size the PDF prints at. */
-const PAGE = { width: 794, height: 1123, scale: 2, pdf: true };
+const PAGE = { width: 794, height: 1123, scale: 2, pdf: true, fitHeight: true };
 
 const str = (v) => (typeof v === 'string' ? v.trim() : '');
 
@@ -86,6 +126,7 @@ function detailFrom(row) {
         family: familyOf(row),
         model: str(row.inverterModel) || str(row.model) || str(row.name),
         warrantyEndDate: toDateString(row.warrantyEndDate),
+        warrantyYears: warrantyYearsOf(row),
         customer: {
             name: str(row.customerName),
             email: str(row.customerEmail),
@@ -107,14 +148,19 @@ function detailFrom(row) {
 
 /* ── Fields: the app's warrantyFields / hybrid*Fields ─────────────────────── */
 
+/** One line: address, city, state, PIN code, country (order fixed 2026-10-27). */
 function composeAddress(inst) {
-    return [inst.address, inst.city, inst.postalCode, inst.state, inst.country]
+    return [inst.address, inst.city, inst.state, inst.postalCode, inst.country]
         .map((s) => (s || '').trim())
         .filter(Boolean)
         .join(', ');
 }
 
 const shown = (v) => v || '-';
+
+/** The installation-address row: one combined value, wrapping at normal size when long (2026-10-27). */
+const addrClass = (f) => (/^Installation Address/.test(f.label) ? ' addr' : '');
+
 
 function warrantyFields(d) {
     return [
@@ -147,20 +193,54 @@ function hybridCenteredFields(d) {
     ];
 }
 
+/** The title line above CERTIFICATE, per product (one layout for all, 2026-10-27). */
+function titleFor(family) {
+    switch (family) {
+        case 'hybrid':
+            return 'FESTON HYBRID WARRANTY';
+        case 'batteries':
+            return 'FESTON BATTERY WARRANTY';
+        case 'ongrid':
+            return 'FESTON ON-GRID WARRANTY';
+        case 'micro-inverter':
+            return 'FESTON MICRO INVERTER WARRANTY';
+        default:
+            return 'FESTON WARRANTY';
+    }
+}
+
+/** The navy pill: the plan and its length, now that the big "N YEARS" headline is gone. */
+function pillText(years) {
+    return `${PLAN.type} · ${years} years`;
+}
+
+/**
+ * The field block, per product: an inverter names itself and (hybrid) its
+ * batteries and logger; a battery names itself and has no logger.
+ */
 function hybridBlockFields(d) {
-    const battery = batteryDisplay(d.battery);
-    return [
+    const head = [
         { label: 'End Date of Warranty:', value: shown(d.warrantyEndDate) },
         { label: 'Installation company:', value: d.installation.company },
-        { label: 'Installation Address:', value: d.installation.address },
-        { label: 'Town/City:', value: d.installation.city },
-        { label: 'Postal Code:', value: d.installation.postalCode },
+        // One row, one line: address, city, state, PIN code, country (2026-10-27).
+        { label: 'Installation Address:', value: composeAddress(d.installation) },
+    ];
+    if (d.family === 'batteries') {
+        return [...head, { label: 'Battery Model:', value: d.model }, { label: 'Battery Serial:', value: d.serialnumber }];
+    }
+    const inverter = [
         { label: 'Inverter Model:', value: d.model },
         { label: 'Inverter Serial:', value: d.serialnumber },
-        { label: 'Battery Serial:', value: battery.serial },
-        { label: 'Battery Model:', value: battery.model },
-        { label: 'Logger no:', value: d.installation.wifiLogger },
     ];
+    const battery = batteryDisplay(d.battery);
+    const batteries =
+        d.family === 'hybrid'
+            ? [
+                  { label: 'Battery Serial:', value: battery.serial },
+                  { label: 'Battery Model:', value: battery.model },
+              ]
+            : [];
+    return [...head, ...inverter, ...batteries, { label: 'Logger no:', value: d.installation.wifiLogger }];
 }
 
 /* ── Pages: the app's HTML, with print overrides appended ────────────────── */
@@ -178,7 +258,7 @@ function standardHtml(d) {
             (f) => `
         <tr>
           <td class="fl">${escapeHtml(f.label)}</td>
-          <td class="fv">${escapeHtml(f.value || '-')}</td>
+          <td class="fv${addrClass(f)}">${escapeHtml(f.value || '-')}</td>
         </tr>`,
         )
         .join('');
@@ -207,6 +287,7 @@ function standardHtml(d) {
   table.fields td { padding: 7px 6px; font-size: 14px; vertical-align: top; line-height: 1.4; }
   td.fl { color: #6b7480; width: 44%; }
   td.fv { color: #1a1a1a; font-weight: 600; }
+  td.addr { overflow-wrap: anywhere; word-break: break-word; }
 ${PRINT}
 </style>
 </head>
@@ -215,12 +296,12 @@ ${PRINT}
     <img class="logo" src="${FESTON_MARK_DATA_URI}" alt="Feston" />
     <div class="word">WARRANTY</div>
     <div class="cert-word">CERTIFICATE</div>
-    <div class="years">${PLAN.years} YEARS</div>
+    <div class="years">${d.warrantyYears} YEARS</div>
 
     <div class="plan-l">Warranty Type:</div>
     <div class="plan-v">${escapeHtml(PLAN.type)}</div>
     <div class="plan-l">Warranty Length :</div>
-    <div class="plan-v">${escapeHtml(PLAN.length)}*</div>
+    <div class="plan-v">${escapeHtml(lengthText(d.warrantyYears))}*</div>
     <div class="note">*For full terms and conditions, visit ${escapeHtml(PLAN.website)}</div>
 
     <div class="reg first"><span class="l">This Product is registered to :</span><span class="v">${owner}</span></div>
@@ -245,7 +326,7 @@ function hybridHtml(d) {
             (f) => `
         <tr>
           <td class="bl">${escapeHtml(f.label)}</td>
-          <td class="bv">${escapeHtml(f.value || '-')}</td>
+          <td class="bv${addrClass(f)}">${escapeHtml(f.value || '-')}</td>
         </tr>`,
         )
         .join('');
@@ -273,11 +354,12 @@ function hybridHtml(d) {
   .note { text-align: center; font-size: 12px; color: #7c828a; margin-top: 20px; }
   .cline { text-align: center; font-size: 15px; color: #565b61; margin-top: 6px; }
   .cline b { color: #1a1a1a; font-weight: 700; }
-  .body { display: flex; align-items: flex-end; margin-top: 14px; min-height: 220px; }
+  .body { display: flex; align-items: flex-end; margin-top: 24px; }
   table.block { border-collapse: collapse; flex: 1; min-width: 0; }
   table.block td { padding: 5px 4px; font-size: 14px; vertical-align: top; }
   td.bl { color: #565b61; white-space: nowrap; padding-right: 20px; padding-left: 14px; }
   td.bv { color: #1a1a1a; font-weight: 700; overflow-wrap: anywhere; word-break: break-word; }
+  td.addr { overflow-wrap: anywhere; word-break: break-word; }
   .trophy { width: 150px; height: auto; margin: 0 6px 4px 8px; flex-shrink: 0; }
 ${PRINT}
 </style>
@@ -289,12 +371,12 @@ ${PRINT}
         <img class="wordmark" src="${FESTON_WORDMARK_PNG_BASE64_URI}" alt="Feston" />
         <div class="serial">Serial No: <b>${serial}</b></div>
       </div>
-      <div class="hybrid">FESTON HYBRID WARRANTY</div>
+      <div class="hybrid">${escapeHtml(titleFor(d.family))}</div>
       <div class="certw">CERTIFICATE</div>
       <div class="divider"></div>
       <div class="wtype">
         <span class="lbl">Warranty Type:</span>
-        <span class="pill">${escapeHtml(PLAN.type)}</span>
+        <span class="pill">${escapeHtml(pillText(d.warrantyYears))}</span>
       </div>
       <div class="note">*For full terms and conditions, visit ${escapeHtml(PLAN.website)}</div>
       ${centered}
@@ -308,10 +390,16 @@ ${PRINT}
 </html>`;
 }
 
-/** The certificate page for a registration row — hybrid layout for hybrids, as in the app. */
+/**
+ * The certificate page for a registration row. One layout for every product
+ * since 2026-10-27 — the gold frame the hybrid certificate always had — so a
+ * customer's inverter and battery certificates look like one set. The title,
+ * the years in the pill and the field block follow the product; standardHtml
+ * is kept for reference only.
+ */
 function warrantyHtml(row) {
     const d = detailFrom(row);
-    return d.family === 'hybrid' ? hybridHtml(d) : standardHtml(d);
+    return hybridHtml(d);
 }
 
 /* ── Issuing ──────────────────────────────────────────────────────────────── */
@@ -386,6 +474,11 @@ module.exports = {
     detailFrom,
     warrantyFields,
     hybridBlockFields,
+    warrantyYearsOf,
+    titleFor,
+    pillText,
+    ruleYearsFor,
+    warrantyEndFor,
     warrantyHtml,
     issueWarranty,
     markEmailed,

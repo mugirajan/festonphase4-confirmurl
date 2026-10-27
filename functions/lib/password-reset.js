@@ -19,6 +19,7 @@
 const admin = require('firebase-admin');
 const { MAIL_COLLECTION, HERO_MAIL_FROM } = require('./config');
 const mailer = require('./mailer');
+const { logoAttachment, logoHtml } = require('./mail-logo');
 
 const BRAND = '#055CA7';
 const INK = '#1D2A3A';
@@ -60,6 +61,7 @@ function buildResetMailDocument({ to, name, link, installer }) {
 <html lang="en">
 <body style="margin:0;padding:0;background:#FBF8F1;">
   <div style="max-width:560px;margin:0 auto;padding:32px 24px;font-family:'Segoe UI',Helvetica,Arial,sans-serif;color:${INK};">
+    ${logoHtml()}
     <p style="font-size:16px;line-height:1.5;margin:0 0 16px;">${escapeHtml(hello)}</p>
     <h1 style="font-size:24px;line-height:1.25;font-weight:700;color:${BRAND};margin:0 0 16px;">Reset your Feston password</h1>
     <p style="font-size:16px;line-height:1.5;margin:0 0 24px;">
@@ -78,7 +80,7 @@ function buildResetMailDocument({ to, name, link, installer }) {
 </html>`;
     const doc = {
         to: [to],
-        message: { subject: 'Reset your Feston password', text, html, attachments: [] },
+        message: { subject: 'Reset your Feston password', text, html, attachments: [logoAttachment()] },
     };
     if (HERO_MAIL_FROM) doc.from = HERO_MAIL_FROM;
     return doc;

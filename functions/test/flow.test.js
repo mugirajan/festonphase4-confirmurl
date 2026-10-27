@@ -127,6 +127,7 @@ const firestoreApi = () => ({
 
 firestoreApi.Timestamp = {
     fromMillis: (millis) => makeTimestamp(millis),
+    fromDate: (d) => makeTimestamp(d.getTime()),
     now: () => makeTimestamp(Date.now()),
 };
 firestoreApi.FieldValue = {
@@ -454,6 +455,122 @@ test('confirming registers the product to the customer and flips the serial', as
     assert.ok(pending.registeredProductId, 'the new registration id is recorded');
 });
 
+test('each Feston battery gets a registration row of its own, 5 years, serial flipped (2026-10-27)', async () => {
+    seedPending({
+        batteryDetails: {
+            purchased: true,
+            brand: 'feston',
+            festonBatteries: [
+                { sn: 'TSTBATRACK000001', model: 'FES-5K-Rack', subtype: 'Rack', capacityKw: '5' },
+                { sn: 'TSTBATRACK000002', model: 'FES-5K-Rack', subtype: 'Rack', capacityKw: '5' },
+            ],
+        },
+    });
+    documents.set(key('serial_num', 'bat1'), { serialnumber: 'TSTBATRACK000001', registered: false });
+    documents.set(key('serial_num', 'bat2'), { serialnumber: 'TSTBATRACK000002', registered: false });
+
+    const res = await pressConfirm(TOKEN);
+    assert.equal(res.body.status, 'completed');
+
+    const rows = registrations();
+    assert.equal(rows.length, 3, 'the inverter and two batteries');
+    const inverter = rows.find((r) => r.serialnumber === '2505063529');
+    const batteries = rows.filter((r) => r.productFamily === 'batteries');
+    assert.equal(batteries.length, 2);
+    for (const b of batteries) {
+        assert.equal(b.parentRegistrationId, res.body.registeredProductId, 'tied to the inverter');
+        assert.equal(b.userId, CUSTOMER_UID, 'same owner');
+        assert.equal(b.customerName, 'Raju Krishnan');
+        assert.equal(b.installationCompany, 'Rppl Solar');
+        assert.equal(b.warrantyYears, 5);
+        assert.equal(b.inverterModel, 'FES-5K-Rack');
+        assert.equal(b.kilowatt, 5);
+        assert.equal(b.capacityKw, null, 'storage never counts as commissioned kW');
+        assert.equal(b.batteryDetails.festonBatteries.length, 1, 'a battery row describes itself');
+    }
+    assert.deepEqual(batteries.map((b) => b.serialnumber).sort(), ['TSTBATRACK000001', 'TSTBATRACK000002']);
+    assert.equal(inverter.parentRegistrationId, undefined);
+    assert.equal(inverter.batteryDetails.festonBatteries.length, 2, 'the inverter row still lists both');
+    assert.equal(documents.get(key('serial_num', 'bat1')).registered, true);
+    assert.equal(documents.get(key('serial_num', 'bat2')).registered, true);
+    assert.equal(serialDoc().registered, true);
+});
+
+test("confirming one link closes the customer's other links for the same serial (2026-10-27)", async () => {
+    seedPending();
+    documents.set(key('pending_registrations', 'tok_second_attempt_0000000000000'), {
+        ...documents.get(key('pending_registrations', TOKEN)),
+        token: 'tok_second_attempt_0000000000000',
+        createdAt: makeTimestamp(Date.now() - HOUR),
+    });
+    documents.set(key('pending_registrations', 'tok_other_serial_000000000000000'), {
+        ...documents.get(key('pending_registrations', TOKEN)),
+        token: 'tok_other_serial_000000000000000',
+        serialnumber: '9999999999',
+    });
+    const res = await pressConfirm(TOKEN);
+    assert.equal(res.body.status, 'completed');
+    const sibling = documents.get(key('pending_registrations', 'tok_second_attempt_0000000000000'));
+    assert.equal(sibling.status, 'superseded');
+    assert.equal(sibling.supersededBy, res.body.registeredProductId);
+    assert.equal(documents.get(key('pending_registrations', 'tok_other_serial_000000000000000')).status, 'pending', 'a different serial is untouched');
+    assert.equal(registrations().length, 1, 'still one registration');
+});
+
+test('a company typed by hand is queued for Feston to verify; the registration stands (2026-10-27)', async () => {
+    seedPending({ registeredByInstallerId: '', installerName: 'Muthu Kumar', installerContact: '+919876543210' });
+    const res = await pressConfirm(TOKEN);
+    assert.equal(res.body.status, 'completed');
+    assert.equal(registrations().length, 1, 'the registration is in');
+    const subs = [...documents.entries()].filter(([k]) => k.startsWith('company_submissions/'));
+    assert.equal(subs.length, 1);
+    const [id, sub] = subs[0];
+    assert.equal(id, 'company_submissions/rpplsolar__9876543210');
+    assert.equal(sub.status, 'pending');
+    assert.equal(sub.name, 'Rppl Solar');
+    assert.equal(sub.installerName, 'Muthu Kumar');
+    assert.equal(sub.customerName, 'Raju Krishnan');
+    assert.equal(sub.source, 'customer');
+    assert.deepEqual(sub.registrationIds, [res.body.registeredProductId]);
+    assert.equal(res.body.registrationRow, undefined, 'internal fields never reach the page');
+});
+
+test('a company Feston already lists is not queued again', async () => {
+    seedPending({ registeredByInstallerId: '' });
+    documents.set(key('companies', 'co_rppl'), { name: 'Rppl Solar' });
+    await pressConfirm(TOKEN);
+    assert.equal([...documents.keys()].filter((k) => k.startsWith('company_submissions/')).length, 0);
+});
+
+test('a pending record without warranty years gets them from the rule at confirm (2026-10-27)', async () => {
+    // A battery staged by an older app build: 10-year end date, no years.
+    seedPending({ productFamily: 'batteries', inverterModel: 'FES-5K-Wall', installationDate: '2026-10-27', warrantyEndDate: '2036-10-27' });
+    const res = await pressConfirm(TOKEN);
+    assert.equal(res.body.status, 'completed');
+    const row = registrations()[0];
+    assert.equal(row.warrantyYears, 5, 'a battery on its own is 5 years');
+    assert.equal(row.warrantyEndDate.toDate().toISOString().slice(0, 10), '2031-10-27');
+
+    // An HV hybrid with no battery, same vintage: 5 years too.
+    seedPending({ productFamily: 'hybrid', submodel: 'HV', installationDate: '2026-10-27', warrantyEndDate: '2036-10-27' });
+    await pressConfirm(TOKEN);
+    const hv = registrations()[0];
+    assert.equal(hv.warrantyYears, 5);
+    assert.equal(hv.warrantyEndDate.toDate().toISOString().slice(0, 10), '2031-10-27');
+
+    // Stamped by the app already: left alone.
+    seedPending({ productFamily: 'batteries', warrantyYears: 5, warrantyEndDate: '2031-05-30' });
+    await pressConfirm(TOKEN);
+    assert.equal(registrations()[0].warrantyYears, 5);
+    assert.equal(registrations()[0].warrantyEndDate, '2031-05-30');
+});
+
+test('an other-brand battery gets no row of its own', async () => {
+    seedPending({ batteryDetails: { purchased: true, brand: 'other', otherBatteries: [{ brand: 'X', model: 'Y', serial: 'Z' }] } });
+    await pressConfirm(TOKEN);
+    assert.equal(registrations().length, 1);
+});
+
 test('link machinery never lands on the registration row', async () => {
     seedPending();
     await pressConfirm(TOKEN);
@@ -619,6 +736,24 @@ test('confirming credits the installer and their company with one install', asyn
     assert.equal(installerDoc().lifetimeInstalls, 11, "installer's lifetime count moves by one");
     assert.equal(companyDoc().lifetimeInstalls, 11, "company's rollup moves with it");
     assert.equal(installerDoc().points, 50, 'and the completion points are awarded');
+});
+
+test('an engineer the CUSTOMER picked from the directory is credited the same way (2026-10-27)', async () => {
+    seedPending({ registeredByInstallerId: '', registeredByInstallerName: '', installerUid: 'inst_55' });
+    seedInstaller({ installs: 10, companyInstalls: 10 });
+
+    const res = await pressConfirm(TOKEN);
+    assert.equal(res.body.status, 'completed');
+
+    assert.equal(installerDoc().lifetimeInstalls, 11, 'the named engineer gets the install');
+    assert.equal(companyDoc().lifetimeInstalls, 11, 'and so does their company');
+    assert.equal(installerDoc().points, 50, 'and the points');
+
+    const row = registrations()[0];
+    assert.equal(row.registeredByInstallerId, 'inst_55', 'stamped like a submitted install, so the company admin sees it');
+    assert.equal(row.installerNamedByCustomer, true, 'but marked as named by the customer');
+    assert.ok(row.companyId, 'linked to the company');
+    assert.equal([...documents.keys()].filter((k) => k.startsWith('company_submissions/')).length, 0, 'a known company needs no verification');
 });
 
 test('a portal-provisioned installer (row id ≠ uid) is credited too', async () => {

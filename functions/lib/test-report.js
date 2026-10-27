@@ -230,7 +230,7 @@ async function issueTestReport(firestore, registrationId, row, deps) {
     }
 
     const uid = str(row.userId);
-    const files = await deps.renderLayout(testReportHtml(row), { ...PAGE, png: false });
+    const files = await deps.renderLayout(testReportHtml(row), { ...PAGE, fitHeight: false, png: false });
     const pdfPath = storagePath(uid, registrationId, 'pdf');
     await deps
         .bucket()

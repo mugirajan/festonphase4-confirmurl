@@ -37,6 +37,9 @@ test('a known login gets a branded email with the reset link, from Feston Care',
     assert.match(m.message.text, /oobCode=abc/);
     assert.match(m.message.html, /#055CA7/);
     assert.match(m.message.html, /Choose a new password/);
+    // The Feston logo leads the mail, inline (2026-10-27).
+    assert.match(m.message.html, /cid:feston-logo/);
+    assert.equal(m.message.attachments[0].cid, 'feston-logo');
     assert.strictEqual(m.passwordResetFor, 'u1');
 });
 

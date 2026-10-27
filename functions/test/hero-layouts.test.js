@@ -156,10 +156,11 @@ test('the mail links to the certificate page when it has one, and still attaches
         pdfUrl: 'https://x.test/a.pdf',
         pageUrl: heroPageUrl('FSV-SSH-2026-00041'),
     });
-    assert.equal(doc.message.attachments.length, 2);
-    assert.ok(doc.message.html.includes('action=hero&amp;n=FSV-SSH-2026-00041'));
-    assert.ok(doc.message.text.includes('action=hero&n=FSV-SSH-2026-00041'));
-    assert.match(doc.message.html, /story-size/);
+    assert.equal(doc.message.attachments.filter((a) => !a.cid).length, 2);
+    // The public page link was dropped from the mail on 2026-10-27: the files are attached, the app has the rest.
+    assert.ok(!doc.message.html.includes('action=hero'));
+    assert.ok(!doc.message.text.includes('action=hero'));
+    assert.doesNotMatch(doc.message.html, /story-size/);
 });
 
 test('the page url is on the confirm function, so it exists wherever the confirm page does', () => {

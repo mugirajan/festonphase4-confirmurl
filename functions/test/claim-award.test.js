@@ -188,6 +188,20 @@ test('a rejected old claim does not hold the award', async () => {
     assert.equal(r.body.status, 'paid');
 });
 
+test('an award Feston took back (credit + debit, claim rejected) can be earned again with a new photo', async () => {
+    const s = seed();
+    s.installer_points = {
+        l1: { awardKey: 'linkedin_post:cust:cust1', action: 'linkedin_post', points: 50, type: 'credit', installerId: 'row_sub' },
+        l2: { awardKey: 'linkedin_post:cust:cust1', action: 'linkedin_post', points: 50, type: 'debit', reversal: true, installerId: 'row_sub' },
+    };
+    // The auto claim this route wrote the first time, as the portal leaves it after a take-back.
+    s.points_claims = { auto_old: { awardKey: 'linkedin_post:cust:cust1', status: 'rejected' } };
+    const fs = fakeFirestore(s);
+    const r = await call(fs, 'tok-sub', linkedin({ storagePath: 'product_files/reg1/2.jpg', productFileId: 'pf2' }));
+    assert.equal(r.body.status, 'paid', 'netted to nothing, so open again');
+    assert.equal(fs.data.installers.row_sub.points, 150);
+});
+
 test('the same photo bytes reused on another award -> 409, nothing paid', async () => {
     const fs = fakeFirestore(seed());
     const same = { 'product_files/reg1/1.jpg': 'SAME', 'product_files/reg2/9.jpg': 'SAME' };
@@ -294,6 +308,23 @@ test('install points: what was earned on this install, and which photo rewards a
     assert.equal(byKind.wifi_logger, undefined, 'paused rules are left out');
     assert.equal(byKind.google_review, undefined, 'zero-point rules are left out');
     assert.equal(r.body.availableTotal, 50 + 200);
+});
+
+test('install points: an award taken back is neither listed as earned nor marked done', async () => {
+    const s = seed();
+    s.points_config.eb_bill_before_after = { points: 50, active: true };
+    s.installer_points = {
+        l1: { installerId: 'uid_sub', registrationId: 'reg1', action: 'complete_registration', points: 150, type: 'credit' },
+        l2: { installerId: 'uid_sub', registrationId: 'reg1', action: 'eb_bill_before_after', points: 50, type: 'credit', awardKey: 'eb_bill_before_after:cust:cust1' },
+        l3: { installerId: 'uid_sub', registrationId: 'reg1', action: 'eb_bill_before_after', points: 50, type: 'debit', reversal: true, awardKey: 'eb_bill_before_after:cust:cust1' },
+    };
+    s.points_claims = { auto_x: { awardKey: 'eb_bill_before_after:cust:cust1', status: 'rejected' } };
+    const r = await summary(fakeFirestore(s), 'tok-sub');
+    assert.equal(r.status, 200);
+    assert.equal(r.body.earnedTotal, 150);
+    assert.deepEqual(r.body.earned, [{ label: 'Install points', points: 150 }], 'the netted-out EB bill is not listed');
+    const byKind = Object.fromEntries(r.body.rules.map((x) => [x.kind, x.status]));
+    assert.equal(byKind.eb_bill_before_after, 'available', 'open again for a correct photo');
 });
 
 test('install points: only engineers who worked on the install may see it', async () => {

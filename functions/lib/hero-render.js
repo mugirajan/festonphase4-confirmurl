@@ -103,17 +103,35 @@ async function closeBrowser() {
  * Chrome will happily screenshot the page with fallback metrics and the
  * customer's name comes out in Segoe UI.
  */
-async function renderLayout(html, { width, height, scale = SCALE, pdf: wantPdf = true } = {}) {
+/**
+ * `fitHeight` (2026-10-27): size the page to the content instead of the given
+ * height — the warranty certificate is shorter than A4, and a fixed page left
+ * the bottom half of the PDF blank. The viewport starts short so the measured
+ * document height is the content's, not the viewport's.
+ */
+async function renderLayout(html, { width, height, scale = SCALE, pdf: wantPdf = true, fitHeight = false } = {}) {
     const browser = await getBrowser();
     const page = await browser.newPage();
     try {
         await page.setViewport({
             width,
-            height,
+            height: fitHeight ? 10 : height,
             deviceScaleFactor: scale,
         });
         await page.setContent(html, { waitUntil: 'load' });
         await page.evaluate(() => document.fonts.ready);
+
+        if (fitHeight) {
+            // Measured under PRINT media: that is how page.pdf lays the page
+            // out, and it differs slightly from the screen layout. Headroom so
+            // a rounding difference can never push the last rows onto a second
+            // page, which pageRanges '1' would drop.
+            await page.emulateMediaType('print');
+            const measured = await page.evaluate(() => Math.ceil(document.documentElement.scrollHeight));
+            await page.emulateMediaType('screen');
+            if (measured > 0) height = Math.min(Math.max(measured + 24, 100), height * 3);
+            await page.setViewport({ width, height, deviceScaleFactor: scale });
+        }
 
         const png = await page.screenshot({
             type: 'png',

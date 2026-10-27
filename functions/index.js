@@ -89,6 +89,8 @@ const SPLIT_ACTIONS = {
     'split-award': pointsSplit.awardSplit,
     notifications: pointsSplit.listNotifications,
     'notifications-read': pointsSplit.markNotificationsRead,
+    // The portal, after deciding a points claim: tell the engineer (bell).
+    'claim-notify': require('./lib/claim-notify').notifyClaimDecision,
 };
 const heroServe = require('./lib/hero-serve');
 const { renderHeroPage } = require('./lib/hero-page');
@@ -221,6 +223,36 @@ exports.confirm = functions.https.onRequest((req, res) => {
                 return sendJson(res, 500, { status: 'error', message: 'Could not credit the points. The photo is saved.' });
             }
         }
+        // An ISSUED warranty certificate or test report (2026-10-27): the same
+        // file the customer was emailed, for the customer (the app), their
+        // installer's company admin, or Feston staff. ID token required; see
+        // lib/certificate-files.js for who may read what. Bytes, not JSON.
+        if (req.method === 'POST' && (action === 'certificate-file' || action === 'company-certificate-file')) {
+            try {
+                const body = (req.body && typeof req.body === 'object') ? req.body : {};
+                const result = await require('./lib/certificate-files').certificateFile({
+                    firestore: admin.firestore(),
+                    verifyIdToken: (t) => admin.auth().verifyIdToken(t),
+                    authorization: req.get('authorization'),
+                    registrationId: asString(body.registrationId),
+                    serialnumber: asString(body.serialnumber),
+                    kind: asString(body.kind),
+                    variant: asString(body.variant),
+                    readObject: async (p) => (await admin.storage().bucket().file(p).download())[0],
+                    logger: functions.logger,
+                });
+                if (!result.file) return sendJson(res, result.status, result.body);
+                const disposition = body.download ? 'attachment' : 'inline';
+                res.set('Cache-Control', 'private, max-age=0, must-revalidate');
+                res.set('Content-Type', result.file.contentType);
+                res.set('Content-Disposition', `${disposition}; filename="${result.file.filename}"`);
+                return res.status(200).send(result.file.bytes);
+            } catch (error) {
+                functions.logger.error('certificate-file failed', error);
+                return sendJson(res, 500, { status: 'error', message: 'Could not read the certificate.' });
+            }
+        }
+
         // Multi-engineer installs (2026-10-22): the company admin divides the
         // held install points, and each engineer reads their notifications.
         // ID token required on all four; see lib/points-split.js.

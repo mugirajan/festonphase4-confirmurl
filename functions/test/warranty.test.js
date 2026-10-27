@@ -12,6 +12,7 @@ const {
     issueWarranty,
     warrantyFilename,
 } = require('../lib/warranty-certificate');
+const { LOGO_CID, fileAttachments } = require('../lib/mail-logo');
 const { buildMailDocument, buildWarrantyMailDocument } = require('../lib/hero-mail');
 
 const ONGRID = {
@@ -93,7 +94,7 @@ test('the standard certificate lists the same fields, in the same order, as the 
             'Wifi Logger',
         ],
     );
-    assert.equal(fields[4].value, '12 Gandhi St, Chennai, 600040, Tamil Nadu, India');
+    assert.equal(fields[4].value, '12 Gandhi St, Chennai, Tamil Nadu, 600040, India');
     assert.equal(fields[2].value, '2036-10-20');
 });
 
@@ -108,8 +109,31 @@ test('hybrids get the hybrid layout, with every battery serial and the model onc
     const block = hybridBlockFields(detailFrom(HYBRID));
     assert.equal(block.find((f) => f.label === 'Battery Serial:').value, 'TSTBATRACK000001, TSTBATRACK000002');
     assert.equal(block.find((f) => f.label === 'Battery Model:').value, 'FES-5K-Rack');
-    assert.doesNotMatch(warrantyHtml(ONGRID), /FESTON HYBRID WARRANTY/);
-    assert.match(warrantyHtml(ONGRID), /10 YEARS/);
+    // One layout for all (2026-10-27): the on-grid gets the gold frame too, with its own title and no battery rows.
+    const ongrid = warrantyHtml(ONGRID);
+    assert.doesNotMatch(ongrid, /FESTON HYBRID WARRANTY/);
+    assert.match(ongrid, /FESTON ON-GRID WARRANTY/);
+    assert.match(ongrid, /Standard warranty · 10 years/);
+    assert.doesNotMatch(ongrid, /Battery Serial/);
+    assert.match(ongrid, /Logger no/);
+});
+
+test('warranty years follow the product (2026-10-27)', () => {
+    const { warrantyYearsOf } = require('../lib/warranty-certificate');
+    const noDates = { ...ONGRID, installationDate: '', warrantyEndDate: '' };
+    assert.equal(warrantyYearsOf({ ...noDates, warrantyYears: 5 }), 5, 'the stamped value wins');
+    assert.equal(warrantyYearsOf(ONGRID), 10, 'read from the dates when not stamped');
+    assert.equal(warrantyYearsOf({ ...noDates, productFamily: 'batteries' }), 5, 'a battery row is 5');
+    assert.equal(warrantyYearsOf({ ...noDates, productFamily: 'hybrid', submodel: 'HV' }), 5, 'HV hybrid, no battery');
+    assert.equal(warrantyYearsOf({ ...noDates, productFamily: 'hybrid', submodel: 'HV', batteryDetails: { purchased: true, brand: 'feston' } }), 10, 'HV hybrid with a Feston battery');
+    assert.equal(warrantyYearsOf({ ...noDates, productFamily: 'hybrid', submodel: 'HV', batteryDetails: { purchased: true, brand: 'other' } }), 5, 'HV hybrid with another brand');
+    assert.equal(warrantyYearsOf({ ...noDates, productFamily: 'hybrid', submodel: 'LV' }), 10, 'LV hybrid');
+    const battery = warrantyHtml({ ...noDates, productFamily: 'batteries', warrantyYears: 5 });
+    assert.match(battery, /FESTON BATTERY WARRANTY/);
+    assert.match(battery, /Standard warranty · 5 years/);
+    assert.doesNotMatch(battery, /10 years/);
+    assert.match(battery, /Battery Model/);
+    assert.doesNotMatch(battery, /Inverter Model|Logger no/);
 });
 
 test('customer-typed text is escaped, never injected into the page', () => {
@@ -148,7 +172,7 @@ test('the hero email carries the warranty PDF as a third attachment', () => {
         warranty: { url: 'https://x/w.pdf', filename: warrantyFilename('2209040013'), serial: '2209040013' },
     });
     assert.deepEqual(
-        doc.message.attachments.map((a) => a.filename),
+        fileAttachments(doc.message.attachments).map((a) => a.filename),
         ['FSH-2026-000001.png', 'FSH-2026-000001.pdf', 'Warranty-2209040013.pdf'],
     );
     assert.match(doc.message.text, /and warranty certificate for serial 2209040013 are attached/);
@@ -160,8 +184,57 @@ test('the hero email carries the warranty PDF as a third attachment', () => {
         pngUrl: 'p',
         pdfUrl: 'q',
     });
-    assert.equal(without.message.attachments.length, 2, 'no warranty, no third attachment');
+    assert.equal(fileAttachments(without.message.attachments).length, 2, 'no warranty, no third attachment');
     assert.doesNotMatch(without.message.text, /warranty/i);
+});
+
+test("the batteries' certificates ride in the same email, and the mail says so (2026-10-27)", () => {
+    const extras = [
+        { serial: 'TSTBATRACK000001', url: 'https://x/b1.pdf', filename: 'Warranty-TSTBATRACK000001.pdf', testReportUrl: 'https://x/b1t.pdf', testReportFilename: 'Test-Report-TSTBATRACK000001.pdf' },
+        { serial: 'TSTBATRACK000002', url: 'https://x/b2.pdf', filename: 'Warranty-TSTBATRACK000002.pdf', testReportUrl: '', testReportFilename: '' },
+    ];
+    const hero = buildMailDocument({
+        to: 'kamal@example.com',
+        customerName: 'Kamal Raj',
+        certificateNumber: 'FSH-2026-000001',
+        co2Tonnes: 7,
+        trees: 820,
+        pngUrl: 'https://x/hero.png',
+        pdfUrl: 'https://x/hero.pdf',
+        warranty: { url: 'https://x/w.pdf', filename: warrantyFilename('2209040013'), serial: '2209040013' },
+        extras,
+    });
+    assert.deepEqual(
+        fileAttachments(hero.message.attachments).map((a) => a.filename),
+        ['FSH-2026-000001.png', 'FSH-2026-000001.pdf', 'Warranty-2209040013.pdf', 'Warranty-TSTBATRACK000001.pdf', 'Test-Report-TSTBATRACK000001.pdf', 'Warranty-TSTBATRACK000002.pdf'],
+    );
+    assert.match(hero.message.text, /each of the 2 Feston batteries installed with it \(serial TSTBATRACK000001, TSTBATRACK000002\)/);
+    assert.match(hero.message.html, /each of the 2 Feston batteries/);
+
+    const only = buildWarrantyMailDocument({
+        to: 'kamal@example.com',
+        customerName: 'Kamal Raj',
+        serialnumber: '2209040013',
+        url: 'https://x/w.pdf',
+        filename: 'Warranty-2209040013.pdf',
+        extras: [extras[1]],
+    });
+    assert.deepEqual(fileAttachments(only.message.attachments).map((a) => a.filename), ['Warranty-2209040013.pdf', 'Warranty-TSTBATRACK000002.pdf']);
+    assert.match(only.message.text, /the warranty certificate for the Feston battery installed with it \(serial TSTBATRACK000002\)/);
+});
+
+test("the warranty-only email carries the customer's Super Hero certificate too (2026-10-27)", () => {
+    const doc = buildWarrantyMailDocument({
+        to: 'kamal@example.com',
+        customerName: 'Kamal Raj',
+        serialnumber: '2209040013',
+        url: 'https://x/w.pdf',
+        filename: 'Warranty-2209040013.pdf',
+        hero: { number: 'FSV-SSH-2026-00011', pngUrl: 'https://x/h.png', pdfUrl: 'https://x/h.pdf' },
+    });
+    assert.deepEqual(fileAttachments(doc.message.attachments).map((a) => a.filename), ['Warranty-2209040013.pdf', 'FSV-SSH-2026-00011.png', 'FSV-SSH-2026-00011.pdf']);
+    assert.match(doc.message.text, /Solar Super Hero certificate \(No\. FSV-SSH-2026-00011\) is attached as well/);
+    assert.match(doc.message.html, /Solar Super Hero certificate/);
 });
 
 test('the warranty-only email names the serial and attaches the PDF', () => {
@@ -173,6 +246,7 @@ test('the warranty-only email names the serial and attaches the PDF', () => {
         filename: 'Warranty-2209040013.pdf',
     });
     assert.equal(doc.message.subject, 'Kamal, your Feston warranty certificate');
-    assert.deepEqual(doc.message.attachments, [{ filename: 'Warranty-2209040013.pdf', path: 'https://x/w.pdf' }]);
+    assert.deepEqual(fileAttachments(doc.message.attachments), [{ filename: 'Warranty-2209040013.pdf', path: 'https://x/w.pdf' }]);
+    assert.equal(doc.message.attachments[0].cid, 'feston-logo', 'the logo leads every mail');
     assert.match(doc.message.text, /serial 2209040013/);
 });

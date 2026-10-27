@@ -8,6 +8,9 @@ const { payloadFields, webCompatFields } = require('./payload');
 const { resolveAward } = require('./award-rule');
 const { isFirstInstall, registeredPromptly } = require('./system-awards');
 const fraud = require('./fraud');
+const batteryRows = require('./battery-rows');
+const { recordCompanySubmission } = require('./company-submissions');
+const { ruleYearsFor, warrantyEndFor } = require('./warranty-certificate');
 const { SPLITS_COLLECTION, splitTeam, splitRecord } = require('./points-split');
 
 /**
@@ -165,7 +168,7 @@ async function completeRegistration(token, { userAgent, verifiedPhone, requirePh
         }
     };
 
-    return firestore.runTransaction(async (tx) => {
+    const result = await firestore.runTransaction(async (tx) => {
         const doc = await tx.get(ref);
         if (!doc.exists) return { status: 'not-found' };
 
@@ -255,6 +258,36 @@ async function completeRegistration(token, { userAgent, verifiedPhone, requirePh
             }
         }
 
+        // Other links still open for the SAME serial (2026-10-27): a customer
+        // who submits twice gets two links, and once one is confirmed the
+        // other can never complete (the serial is registered). Left 'pending'
+        // it sat in the portal's "Awaiting customer" list as if something were
+        // still owed. Read here, marked 'superseded' below.
+        const serialnumber = typeof pending.serialnumber === 'string' ? pending.serialnumber.trim() : '';
+        const siblingRefs = [];
+        if (serialnumber) {
+            const siblings = await tx.get(firestore.collection(PENDING_COLLECTION).where('serialnumber', '==', serialnumber));
+            for (const d of siblings.docs) {
+                if (d.id === token) continue; // the link being confirmed
+                const s = d.data() || {};
+                if (s.status === 'pending' || !s.status) siblingRefs.push(d.ref);
+            }
+        }
+
+        // The Feston batteries on this install (2026-10-27): each becomes a
+        // registration row of its own below, with its own certificates, and
+        // its serial is flipped like the inverter's. Read here, before any
+        // write. A battery serial missing from inventory is not flipped and
+        // still gets its row, as for the inverter.
+        const batteries = batteryRows.festonBatteriesOf(pending);
+        const batterySerialRefs = [];
+        for (const b of batteries) {
+            const q = await tx.get(
+                firestore.collection(SERIALS_COLLECTION).where('serialnumber', '==', b.serial).limit(1),
+            );
+            batterySerialRefs.push(q.empty ? null : q.docs[0].ref);
+        }
+
         // Credit the installer who initiated this registration: an install on
         // their lifetime count, and the reward points for completing it.
         //
@@ -266,10 +299,19 @@ async function completeRegistration(token, { userAgent, verifiedPhone, requirePh
         // `points_config`, or set to zero — and the lifetime count is a record of
         // work done, not of reward policy. Tying the count to the award would
         // silently stop counting installs the moment someone paused the payout.
-        const installerId =
+        const submitterInstallerId =
             typeof pending.registeredByInstallerId === 'string'
                 ? pending.registeredByInstallerId.trim()
                 : '';
+        // A customer registering on their own picks the engineer from Feston's
+        // directory (2026-10-27): that engineer did the install and is
+        // credited exactly as if they had submitted it — company link, install
+        // count, points. The row says the customer named them.
+        const namedInstallerId =
+            typeof pending.installerUid === 'string' ? pending.installerUid.trim() : '';
+        const installerId = submitterInstallerId || namedInstallerId;
+        const installerNamedByCustomer = !submitterInstallerId && !!namedInstallerId;
+        let installerName = '';
 
         // Allocated BEFORE the awards so the system ones can key themselves on
         // the row they belong to. `.doc()` reserves an id without writing.
@@ -343,6 +385,7 @@ async function completeRegistration(token, { userAgent, verifiedPhone, requirePh
                 // fact that this was their first is gone.
                 isFirstInstallForEngineer = isFirstInstall(installerDoc.data());
                 installerPhone = String((installerDoc.data() || {}).phone || '');
+                installerName = String((installerDoc.data() || {}).name || '');
 
                 // The company's lifetime count is the sum of its installers', so
                 // it moves in the same transaction. Read first for the same
@@ -527,7 +570,7 @@ async function completeRegistration(token, { userAgent, verifiedPhone, requirePh
             now: confirmedAt.toMillis(),
         });
 
-        tx.set(registrationRef, {
+        const inverterRow = {
             ...payloadFields(pending),
             // The same facts under the portal's field names. Without these the
             // registration is invisible to the admin portal and no certificate
@@ -546,6 +589,16 @@ async function completeRegistration(token, { userAgent, verifiedPhone, requirePh
             // is it. Absent when no installer row was found, never ''.
             ...(awardCompanyId ? { companyId: awardCompanyId } : {}),
             ...(installerRef ? { registeredByInstallerDocId: installerRef.id } : {}),
+            // Named by the customer, not the submitter: stamped the same way so
+            // every list, count and ledger that keys on the engineer sees it.
+            ...(installerNamedByCustomer && installerRef
+                ? {
+                      registeredByInstallerId: installerId,
+                      registeredByInstallerName: installerName,
+                      registeredByInstallerPhone: installerPhone,
+                      installerNamedByCustomer: true,
+                  }
+                : {}),
             // Null when the serial was not in inventory — absent rather than 0, so
             // a reader can tell "not known" from "a zero-kilowatt install".
             capacityKw,
@@ -556,6 +609,35 @@ async function completeRegistration(token, { userAgent, verifiedPhone, requirePh
             // through — the customer did nothing wrong — and an OTP audit is
             // queued below; a failed audit is what claws the points back.
             ...fraud.riskFields(risk, confirmedAt),
+        };
+        // The warranty duration is the service's call (2026-10-27). A pending
+        // record from an app build that predates the rule carries no
+        // `warrantyYears` and a 10-year end date whatever the product; stamp
+        // the rule's years and the end date that follows from them.
+        if (!(typeof inverterRow.warrantyYears === 'number' && inverterRow.warrantyYears > 0)) {
+            const years = ruleYearsFor(inverterRow);
+            inverterRow.warrantyYears = years;
+            const end = warrantyEndFor(inverterRow.installationDate, years);
+            if (end) inverterRow.warrantyEndDate = admin.firestore.Timestamp.fromDate(end);
+        }
+        tx.set(registrationRef, inverterRow);
+
+        // One row per Feston battery (lib/battery-rows.js): the same customer,
+        // site and engineer, its own serial, model and 5-year warranty, tied to
+        // the inverter by parentRegistrationId. Each row fires the certificate
+        // trigger of its own; the inverter's flow carries them in one email.
+        const batteryRegistrationIds = [];
+        batteries.forEach((entry, i) => {
+            const bRef = firestore.collection(REGISTRATIONS_COLLECTION).doc();
+            tx.set(
+                bRef,
+                batteryRows.batteryRow(inverterRow, entry, {
+                    parentRegistrationId: registrationRef.id,
+                    toTimestamp: (d) => admin.firestore.Timestamp.fromDate(d),
+                }),
+            );
+            batteryRegistrationIds.push(bRef.id);
+            if (batterySerialRefs[i]) tx.update(batterySerialRefs[i], { registered: true });
         });
 
         const riskAuditId = fraud.writeRiskRecords(tx, firestore, {
@@ -584,6 +666,14 @@ async function completeRegistration(token, { userAgent, verifiedPhone, requirePh
             completedAt: confirmedAt,
             completedUserAgent: (userAgent || '').slice(0, 300),
         });
+        for (const sRef of siblingRefs) {
+            tx.update(sRef, {
+                status: 'superseded',
+                supersededBy: registrationRef.id,
+                supersededByToken: token,
+                supersededAt: confirmedAt,
+            });
+        }
 
         // Installer credit: the lifetime install count, the running points total
         // and a ledger row — all in the same transaction as the registration, so
@@ -729,8 +819,35 @@ async function completeRegistration(token, { userAgent, verifiedPhone, requirePh
             registeredProductId: registrationRef.id,
             serialFlipped: Boolean(serialRef),
             serialDocId,
+            batteryRegistrationIds,
+            // For the company check below; not sent to the page.
+            registrationRow: inverterRow,
+            registeredByInstaller: Boolean(submitterInstallerId),
         };
     });
+
+    // A company typed by hand (no installer record behind it): recorded for
+    // Feston to verify (lib/company-submissions.js). After the transaction and
+    // best effort — the registration is done and must never be undone by this.
+    if (result && result.status === 'completed' && !result.alreadyCompleted && result.registrationRow) {
+        try {
+            await recordCompanySubmission(firestore, {
+                registrationId: result.registeredProductId,
+                batteryRegistrationIds: result.batteryRegistrationIds || [],
+                row: result.registrationRow,
+                source: result.registeredByInstaller ? 'installer' : 'customer',
+                now: admin.firestore.Timestamp.now(),
+            });
+        } catch (error) {
+            console.error('company submission: could not record', {
+                registrationId: result.registeredProductId,
+                error: String(error && error.message ? error.message : error),
+            });
+        }
+        delete result.registrationRow;
+        delete result.registeredByInstaller;
+    }
+    return result;
 }
 
 module.exports = { loadPending, completeRegistration };

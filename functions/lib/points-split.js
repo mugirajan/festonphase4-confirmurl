@@ -233,6 +233,11 @@ async function awardSplit({ firestore, verifyIdToken, authorization, body, now, 
             awardBasis: 'split',
             capacityKw: split.capacityKw == null ? null : split.capacityKw,
             registrationId,
+            // Named here too (2026-10-26): a teammate's install is not in the
+            // engineer's own registration list and the rules do not let them
+            // read it, so the app's points history takes the name from the row.
+            serialnumber: str(product.serialnumber),
+            customerName: str(customer.name),
             splitPhase: member.role,
             createdAt: now(),
             createdBy: admin.uid,

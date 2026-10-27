@@ -46,7 +46,12 @@ const PAYLOAD_FIELDS = [
     'wifiLogger',
     'installerName',
     'installerContact',
+    // The directory ids behind a customer's picks (2026-10-27).
+    'installerUid',
+    'installerCompanyId',
     'warrantyEndDate',
+    // 10, or 5 for a battery / an HV hybrid without a Feston battery (2026-10-27).
+    'warrantyYears',
     // These sit on the pending record and were simply never listed, so they
     // never reached the registration. `Phase` and `capacity` are printed on the
     // warranty certificate; the media URLs are the evidence of the install.

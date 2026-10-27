@@ -11,6 +11,7 @@ const {
     totalCapacityKw,
     impactFor,
 } = require('../lib/hero-impact');
+const { LOGO_CID, fileAttachments } = require('../lib/mail-logo');
 const { formatNumber, issueYear } = require('../lib/hero-number');
 const {
     TOKENS,
@@ -82,6 +83,8 @@ test('capacity sums across a customer real registrations', () => {
     // spelling it "3 KW" and "4 KW ". A missing field must not poison the sum.
     const rows = [{ capacity: undefined }, { capacity: '3 KW' }, { capacity: '4 KW ' }];
     assert.equal(totalCapacityKw(rows), 7);
+    // A battery row (2026-10-27) is storage, not generation.
+    assert.equal(totalCapacityKw([...rows, { productFamily: 'batteries', kilowatt: 10 }, { parentRegistrationId: 'x', capacity: '5' }]), 7);
     assert.equal(impactFor(totalCapacityKw(rows)).co2Tonnes, 7);
 });
 
@@ -241,20 +244,24 @@ test('a reissue does not read like a duplicate of the first send', () => {
     assert.match(again, /updated/i);
 });
 
-test('the mail carries both files as attachments', () => {
+test('the mail carries both files as attachments, after the inline logo', () => {
     const doc = mail();
     assert.deepEqual(doc.to, ['k@example.test']);
-    assert.equal(doc.message.attachments.length, 2);
+    assert.equal(doc.message.attachments[0].cid, LOGO_CID);
+    assert.match(doc.message.html, new RegExp(`cid:${LOGO_CID}`));
+    const files = fileAttachments(doc.message.attachments);
+    assert.equal(files.length, 2);
     assert.deepEqual(
-        doc.message.attachments.map((a) => a.filename),
+        files.map((a) => a.filename),
         ['FSV-SSH-2026-00041.png', 'FSV-SSH-2026-00041.pdf'],
     );
 });
 
-test('attachments travel as URLs, never as inline bytes', () => {
+test('file attachments travel as URLs, never as inline bytes', () => {
     // A Firestore document is capped at 1 MiB and the PNG alone is ~830 KB.
+    // (The 48 KB logo is the one inline part, by design — lib/mail-logo.js.)
     const doc = mail();
-    for (const a of doc.message.attachments) {
+    for (const a of fileAttachments(doc.message.attachments)) {
         assert.ok(a.path.startsWith('https://'), 'attachment must be a URL');
         assert.equal(a.content, undefined);
     }

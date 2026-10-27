@@ -69,6 +69,9 @@ function totalCapacityKw(registrations = []) {
     let total = 0;
     for (const reg of registrations) {
         if (!reg) continue;
+        // A battery row (2026-10-27) is storage, not generation: it adds nothing.
+        const family = String(reg.productFamily || reg.family || '').toLowerCase();
+        if (family === 'batteries' || reg.parentRegistrationId) continue;
         total += capacityKw(reg.capacity) || capacityKw(reg.kilowatt);
     }
     // Capacities carry one decimal at most; float addition of 1.1-style values
