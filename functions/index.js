@@ -81,6 +81,9 @@ const SPLIT_ACTIONS = {
     'consent-form': require('./lib/consent-form').consentForm,
     // The company admin's Certificates page: their customers' Super Hero numbers.
     'company-heroes': require('./lib/company-certificates').listCompanyHeroCertificates,
+    // The company admin's Distributors page: add one (2026-10-28), written with
+    // admin credentials because the rules only let Feston staff create the row.
+    'add-distributor': require('./lib/distributors').addDistributor,
     // The app's GPS step: the written address at the pin, from Google Geocoding.
     'reverse-geocode': require('./lib/reverse-geocode').reverseGeocode,
     // "Forgot your password?": the reset link, emailed by us from Feston Care.

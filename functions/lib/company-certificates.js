@@ -75,7 +75,17 @@ async function listCompanyHeroCertificates({ firestore, verifyIdToken, authoriza
     const heroes = {};
     for (const [uid, h] of Object.entries(heroDocs)) {
         const number = str(h.certificateNumber);
-        if (number) heroes[uid] = { certificateNumber: number, status: str(h.status) || 'rendering' };
+        if (!number) continue;
+        // `issuedAt` and `registrationIds` (2026-10-28) feed the company admin's
+        // programme dashboard: certificates in a period, joined to the installs
+        // they were earned on. The customer's name and email stay out.
+        const issuedAt = h.issuedAt && typeof h.issuedAt.toDate === 'function' ? h.issuedAt.toDate().toISOString() : null;
+        heroes[uid] = {
+            certificateNumber: number,
+            status: str(h.status) || 'rendering',
+            issuedAt,
+            registrationIds: Array.isArray(h.registrationIds) ? h.registrationIds.map(str).filter(Boolean) : [],
+        };
     }
 
     // Which registrations have issued files, so the page knows when it may
@@ -90,4 +100,4 @@ async function listCompanyHeroCertificates({ firestore, verifyIdToken, authoriza
     return reply(200, { status: 'ok', heroes, files });
 }
 
-module.exports = { listCompanyHeroCertificates };
+module.exports = { listCompanyHeroCertificates, companyAdminFrom };

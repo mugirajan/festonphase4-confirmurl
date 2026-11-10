@@ -50,7 +50,10 @@ const DOCS = {
 test("returns only the own company's customers' certificate numbers", async () => {
     const r = await call(fakeFirestore(DOCS), 'tok-admin');
     assert.equal(r.status, 200);
-    assert.deepEqual(r.body.heroes, { cust_a: { certificateNumber: 'FSV-SSH-2026-00011', status: 'ready' } });
+    // issuedAt and registrationIds feed the programme dashboard (2026-10-28).
+    assert.deepEqual(r.body.heroes, {
+        cust_a: { certificateNumber: 'FSV-SSH-2026-00011', status: 'ready', issuedAt: null, registrationIds: [] },
+    });
 });
 
 test('says which registrations have issued files, and only ready ones', async () => {

@@ -20,6 +20,7 @@
         "firebase-admin": "^12.6.0",
         "firebase-functions": "^6.0.1",
         "nodemailer": "^9.0.6",
+        "pdf-lib": "^1.17.1",
         "puppeteer": "^25.10.0",
         "qrcode": "^1.5.4"
     }

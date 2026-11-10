@@ -17,11 +17,15 @@
  * Idempotent: the record in `warranty_certificates/{registrationId}` says the
  * files exist, so the platform's retry re-uses them rather than rendering
  * again, and `emailedAt` on it stops a second email.
+ *
+ * The PDF is the certificate page followed by Feston's three-page warranty
+ * annexure (lib/warranty-annexure.js, 2026-11-10). The PNG is the page alone.
  */
 
 const admin = require('firebase-admin');
 const { WARRANTY_COLLECTION, WARRANTY_STORAGE_PREFIX } = require('./config');
 const { toDateString } = require('./format');
+const { appendWarrantyAnnexure } = require('./warranty-annexure');
 const {
     FESTON_MARK_DATA_URI,
     FESTON_WORDMARK_PNG_BASE64_URI,
@@ -412,7 +416,8 @@ function storagePath(uid, registrationId, ext) {
  * Renders and stores the warranty certificate for one registration, once.
  *
  * Returns the record (`{ pdfPath, pngPath, serialnumber, emailedAt, … }`).
- * `deps` exists for the tests: `renderLayout` (Chrome) and `bucket` (Storage).
+ * `deps` exists for the tests: `renderLayout` (Chrome), `bucket` (Storage) and,
+ * optionally, `appendAnnexure` (defaults to the real one).
  */
 async function issueWarranty(firestore, registrationId, row, deps) {
     const ref = firestore.collection(WARRANTY_COLLECTION).doc(registrationId);
@@ -424,6 +429,8 @@ async function issueWarranty(firestore, registrationId, row, deps) {
 
     const uid = str(row.userId);
     const files = await deps.renderLayout(warrantyHtml(row), PAGE);
+    // The terms travel with the certificate: one PDF, certificate page first.
+    const pdf = await (deps.appendAnnexure || appendWarrantyAnnexure)(files.pdf);
     const b = deps.bucket();
     const options = (contentType) => ({
         resumable: false,
@@ -433,7 +440,7 @@ async function issueWarranty(firestore, registrationId, row, deps) {
     const pdfPath = storagePath(uid, registrationId, 'pdf');
     const pngPath = storagePath(uid, registrationId, 'png');
     await Promise.all([
-        b.file(pdfPath).save(files.pdf, options('application/pdf')),
+        b.file(pdfPath).save(pdf, options('application/pdf')),
         files.png ? b.file(pngPath).save(files.png, options('image/png')) : Promise.resolve(),
     ]);
 

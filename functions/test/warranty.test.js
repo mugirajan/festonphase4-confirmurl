@@ -76,6 +76,8 @@ function fakeDeps() {
             return { pdf: Buffer.from('%PDF'), png: Buffer.from('PNG') };
         },
         bucket: () => ({ file: (path) => ({ save: async () => saved.push(path) }) }),
+        // The fake render is not a real PDF; the annexure has its own test.
+        appendAnnexure: async (pdf) => pdf,
     };
 }
 
