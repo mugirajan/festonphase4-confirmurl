@@ -77,6 +77,8 @@ const SPLIT_ACTIONS = {
     'split-history': pointsSplit.listSplitHistory,
     // The app's Install photos screen: points earned and still open for an install.
     'install-points': require('./lib/claim-award').installPoints,
+    // A social post's link: on the right platform, and not used before (2026-11-19).
+    'check-post-link': require('./lib/post-links').checkPostLink,
     // Feston support's consent call: the customer's own confirmation form.
     'consent-form': require('./lib/consent-form').consentForm,
     // The company admin's Certificates page: their customers' Super Hero numbers.
@@ -182,6 +184,20 @@ exports.confirm = functions.https.onRequest((req, res) => {
             } catch (error) {
                 functions.logger.error('lookup-customer failed', error);
                 return sendJson(res, 500, { status: 'error', message: 'Lookup failed' });
+            }
+        }
+
+        // Email code for the portal's company self-registration (2026-11-18).
+        // The applicant's own ID token is required; see lib/company-email-otp.js.
+        if (req.method === 'POST' && action === 'company-email-otp') {
+            try {
+                // eslint-disable-next-line global-require
+                const { companyEmailOtp } = require('./lib/company-email-otp');
+                const result = await companyEmailOtp({ authorization: req.get('authorization'), body: req.body });
+                return sendJson(res, result.status, result.body);
+            } catch (error) {
+                functions.logger.error('company-email-otp failed', error);
+                return sendJson(res, 500, { status: 'error', message: 'Could not process the code. Please try again.' });
             }
         }
 

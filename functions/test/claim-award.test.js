@@ -347,3 +347,129 @@ test('install points: only engineers who worked on the install may see it', asyn
     assert.equal((await summary(fs, 'tok-other')).status, 403);
     assert.equal((await summary(fs, 'tok-helper')).status, 200);
 });
+
+// ── Social-post links (2026-11-19): right platform, and one link once ────────
+
+const postLinks = require('../lib/post-links');
+
+const checkLink = (fs, token, body) =>
+    postLinks.checkPostLink({
+        firestore: fs,
+        verifyIdToken: verify,
+        authorization: token ? `Bearer ${token}` : undefined,
+        body,
+        now: () => 'NOW',
+    });
+
+test('post link: each platform accepts its own site and refuses the others', () => {
+    const ok = (kind, link) => assert.equal(postLinks.validatePostLink(kind, link).ok, true, `${kind} should accept ${link}`);
+    const no = (kind, link, status) => assert.equal(postLinks.validatePostLink(kind, link).status, status, `${kind} should refuse ${link}`);
+    ok('instagram_post', 'https://www.instagram.com/p/Cabc123/');
+    ok('instagram_post', 'https://instagram.com/reel/Cabc123');
+    ok('facebook_post', 'https://m.facebook.com/story.php?story_fbid=1&id=2');
+    ok('facebook_post', 'https://fb.watch/abc/');
+    ok('linkedin_post', 'https://in.linkedin.com/posts/someone_activity-1');
+    ok('linkedin_post', 'https://lnkd.in/abc');
+    no('instagram_post', 'https://www.facebook.com/p/Cabc123/', 'wrong-platform');
+    no('facebook_post', 'https://www.linkedin.com/posts/x', 'wrong-platform');
+    no('linkedin_post', 'https://www.instagram.com/p/x/', 'wrong-platform');
+    // Look-alikes: the platform name somewhere other than the site itself.
+    no('instagram_post', 'https://instagram.com.evil.example/p/x', 'wrong-platform');
+    no('instagram_post', 'https://evil.example/instagram.com/p/x', 'wrong-platform');
+    no('instagram_post', 'https://instagram.com@evil.example/p/x', 'wrong-platform');
+    no('instagram_post', 'https://notinstagram.com/p/x', 'wrong-platform');
+    no('instagram_post', 'not a link', 'bad-link');
+    no('instagram_post', 'javascript:alert(1)', 'bad-link');
+});
+
+test('post link: two spellings of one post share a key; different posts do not', () => {
+    const key = (kind, link) => postLinks.validatePostLink(kind, link).key;
+    assert.equal(key('instagram_post', 'https://www.instagram.com/p/Cabc/?igsh=xyz'), key('instagram_post', 'http://instagram.com/p/Cabc'));
+    assert.notEqual(key('instagram_post', 'https://instagram.com/p/Cabc'), key('instagram_post', 'https://instagram.com/p/CABC'), 'post codes are case-sensitive');
+    assert.equal(
+        key('facebook_post', 'https://m.facebook.com/story.php?story_fbid=1&id=2&mibextid=zz'),
+        key('facebook_post', 'https://www.facebook.com/story.php?id=2&story_fbid=1'),
+    );
+    assert.notEqual(
+        key('facebook_post', 'https://www.facebook.com/story.php?story_fbid=1&id=2'),
+        key('facebook_post', 'https://www.facebook.com/story.php?story_fbid=9&id=2'),
+    );
+});
+
+test('award: a LinkedIn photo with an Instagram link -> refused, nothing paid', async () => {
+    const fs = fakeFirestore(seed());
+    const r = await call(fs, 'tok-sub', linkedin({ installerPostLink: 'https://www.instagram.com/p/Cabc/' }));
+    assert.equal(r.status, 400);
+    assert.equal(r.body.status, 'wrong-platform');
+    assert.equal(fs.data.installers.row_sub.points, 100);
+});
+
+test('award: a link is paid once; the same post on another customer -> duplicate-link', async () => {
+    const s = seed();
+    s.registered_products.reg3 = { userId: 'cust2', customerName: 'Mani', serialnumber: 'SN3', registeredByInstallerId: 'uid_help', installTeamUids: ['uid_help'], companyId: 'co1' };
+    const fs = fakeFirestore(s);
+    const first = await call(fs, 'tok-sub', linkedin({ installerPostLink: 'https://www.linkedin.com/posts/me_activity-1/' }));
+    assert.equal(first.body.status, 'paid');
+    assert.equal(Object.keys(fs.data.post_link_register).length, 1);
+
+    // Another engineer, another customer, the same post spelt differently.
+    const again = await call(fs, 'tok-helper', {
+        registrationId: 'reg3',
+        kind: 'linkedin_post',
+        storagePath: 'product_files/reg3/1.jpg',
+        productFileId: 'pf3',
+        installerPostLink: 'https://linkedin.com/posts/me_activity-1?utm_source=share',
+    });
+    assert.equal(again.status, 409);
+    assert.equal(again.body.status, 'duplicate-link');
+    assert.equal(fs.data.installers.uid_help.points, 0);
+});
+
+test('award: a link saved on an older photo (before the register) is a duplicate too', async () => {
+    const s = seed();
+    s.product_files = { old: { registrationId: 'regX', kind: 'linkedin_post', uploadedBy: 'uid_other', installerPostLink: 'https://www.linkedin.com/posts/me_activity-1' } };
+    const r = await call(fakeFirestore(s), 'tok-sub', linkedin({ installerPostLink: 'https://www.linkedin.com/posts/me_activity-1' }));
+    assert.equal(r.body.status, 'duplicate-link');
+});
+
+test('award: the same engineer re-filing the same reward on the same install keeps their link', async () => {
+    const fs = fakeFirestore(seed());
+    const link = 'https://www.linkedin.com/posts/me_activity-1';
+    await call(fs, 'tok-sub', linkedin({ installerPostLink: link }));
+    // Feston took the award back: credit + debit, claim rejected.
+    const paid = Object.values(fs.data.installer_points)[0];
+    fs.data.installer_points.undo = { ...paid, type: 'debit' };
+    for (const c of Object.values(fs.data.points_claims)) c.status = 'rejected';
+    const r = await call(fs, 'tok-sub', linkedin({ storagePath: 'product_files/reg1/2.jpg', productFileId: 'pf2', installerPostLink: link }));
+    assert.equal(r.body.status, 'paid');
+});
+
+test('check-post-link: ok for a fresh link, and says why not otherwise', async () => {
+    const fs = fakeFirestore(seed());
+    const body = (extra) => ({ kind: 'linkedin_post', registrationId: 'reg1', link: 'https://www.linkedin.com/posts/me_activity-1', ...extra });
+    assert.equal((await checkLink(fs, null, body())).status, 401);
+    assert.equal((await checkLink(fs, 'tok-cust', body())).status, 403);
+    assert.equal((await checkLink(fs, 'tok-sub', body())).body.status, 'ok');
+    assert.equal(fs.data.post_link_register, undefined, 'asking alone keeps nothing');
+    assert.equal((await checkLink(fs, 'tok-sub', body({ link: 'https://www.instagram.com/p/x' }))).body.status, 'wrong-platform');
+    assert.equal((await checkLink(fs, 'tok-sub', body({ kind: 'eb_bill' }))).status, 400);
+
+    await call(fs, 'tok-sub', linkedin({ installerPostLink: body().link }));
+    assert.equal((await checkLink(fs, 'tok-helper', body({ registrationId: 'reg9' }))).body.status, 'duplicate-link');
+});
+
+test('check-post-link with a photo: keeps the link for that photo, once', async () => {
+    const s = seed();
+    s.product_files = {
+        pfA: { registrationId: 'reg1', kind: 'linkedin_post', uploadedBy: 'uid_sub' },
+        pfB: { registrationId: 'reg2', kind: 'linkedin_post', uploadedBy: 'uid_help' },
+    };
+    const fs = fakeFirestore(s);
+    const link = 'https://www.linkedin.com/posts/me_activity-7';
+    const ask = (token, productFileId) => checkLink(fs, token, { kind: 'linkedin_post', link, productFileId });
+    assert.equal((await ask('tok-helper', 'pfA')).status, 403, 'a photo uploaded by someone else');
+    assert.equal((await ask('tok-sub', 'pfA')).body.status, 'ok');
+    assert.equal(Object.values(fs.data.post_link_register)[0].productFileId, 'pfA');
+    assert.equal((await ask('tok-sub', 'pfA')).body.status, 'ok', 'asking again for the same photo');
+    assert.equal((await ask('tok-helper', 'pfB')).body.status, 'duplicate-link');
+});

@@ -31,6 +31,7 @@
 const crypto = require('node:crypto');
 const { findInstallerByUid } = require('./installer-lookup');
 const { REGISTRATIONS_COLLECTION } = require('./config');
+const postLinks = require('./post-links');
 
 const HASHES_COLLECTION = 'evidence_hashes';
 const CLAIMS_COLLECTION = 'points_claims';
@@ -54,6 +55,8 @@ const PHOTO_RULES = {
 };
 
 const str = (v) => (typeof v === 'string' ? v.trim() : '');
+/** A pasted post link: kept only when it is an http(s) address of sane length. */
+const postLink = (v) => (/^https?:\/\/\S+$/i.test(str(v)) && str(v).length <= 500 ? str(v) : '');
 
 /** Same shape as the app's and portal's `awardKey`. '' when the id the scope needs is missing. */
 function awardKeyFor(ruleKey, rule, { registrationId, customerId }) {
@@ -137,6 +140,22 @@ async function awardPhotoClaim({ firestore, verifyIdToken, authorization, body, 
     const awardKey = awardKeyFor(ruleKey, rule, { registrationId, customerId });
     if (!awardKey) return reply(422, { status: 'no-customer', message: 'This install has no customer to key the award on.' });
 
+    // A social post's link (2026-11-19) must be on that platform, and a link
+    // is accepted once — see lib/post-links.js. Checked here whatever the app
+    // checked first; the register row is read and written in the transaction.
+    const linkAttempt = { uid, registrationId, kind: ruleKey, productFileId };
+    let postLink_ = null;
+    if (postLinks.takesPostLink(ruleKey) && str(b.installerPostLink)) {
+        postLink_ = postLinks.validatePostLink(ruleKey, b.installerPostLink);
+        if (!postLink_.ok) {
+            return reply(400, { status: postLink_.status, message: `${postLink_.message} The photo is saved, but it earns no points.` });
+        }
+        if (await postLinks.usedOnAnotherPhoto(firestore, postLink_.link, linkAttempt)) {
+            return reply(409, { status: 'duplicate-link', message: `${postLinks.DUPLICATE_MESSAGE} The photo is saved, but it earns no points.` });
+        }
+    }
+    const linkRef = postLink_ ? firestore.collection(postLinks.REGISTER_COLLECTION).doc(postLink_.id) : null;
+
     // Hash the bytes actually stored — a hash sent by the app could be anything.
     let sha256 = '';
     try {
@@ -160,6 +179,7 @@ async function awardPhotoClaim({ firestore, verifyIdToken, authorization, body, 
             tx.get(cfgRef),
             tx.get(installer.ref),
         ]);
+        const linkSnap = linkRef ? await tx.get(linkRef) : null;
         // A claim filed the old way (reviewed) for the same award also holds it.
         const manual = await tx.get(
             firestore.collection(CLAIMS_COLLECTION).where('awardKey', '==', awardKey).limit(10),
@@ -185,6 +205,9 @@ async function awardPhotoClaim({ firestore, verifyIdToken, authorization, body, 
         }
         if (hashSnap.exists) {
             return reply(409, { status: 'duplicate-photo', message: 'This photo has already been used before, so it cannot earn points again.' });
+        }
+        if (linkSnap && linkSnap.exists && !postLinks.sameAttempt(linkSnap.data(), linkAttempt)) {
+            return reply(409, { status: 'duplicate-link', message: `${postLinks.DUPLICATE_MESSAGE} The photo is saved, but it earns no points.` });
         }
         const cfg = cfgSnap.exists ? cfgSnap.data() || {} : null;
         const points = Math.round(Number(cfg && cfg.points));
@@ -240,6 +263,10 @@ async function awardPhotoClaim({ firestore, verifyIdToken, authorization, body, 
             subjectLabel: str(reg.serialnumber) || str(reg.Serialnumber),
             proofPath: storagePath,
             proofUrl: str(b.proofUrl),
+            // Social posts (2026-11-18): the links pasted in the app with the
+            // photo, so the reviewer can open the posts themselves.
+            customerPostLink: postLink(b.customerPostLink),
+            installerPostLink: postLink(b.installerPostLink),
             productFileId,
             points,
             awardedPoints: points,
@@ -252,6 +279,18 @@ async function awardPhotoClaim({ firestore, verifyIdToken, authorization, body, 
             decisionMessage: 'Paid automatically when the photo was uploaded.',
         });
         tx.set(hashRef, { registrationId, installerId: uid, kind: ruleKey, claimId: claimRef.id, createdAt: now() });
+        if (linkRef) {
+            tx.set(linkRef, {
+                key: postLink_.key,
+                link: postLink_.link,
+                kind: ruleKey,
+                installerUid: uid,
+                registrationId,
+                productFileId,
+                claimId: claimRef.id,
+                createdAt: now(),
+            });
+        }
         if (fileRef) tx.set(fileRef, { awardedPoints: points, claimId: claimRef.id }, { merge: true });
 
         return reply(200, {
