@@ -845,7 +845,7 @@ test('a single-engineer install is paid at confirm exactly as before', async () 
     assert.equal([...documents.keys()].filter((k) => k.startsWith('points_splits/')).length, 0);
 });
 
-test('a Wi-Fi logger photo from the Evidence step pays the wifi_logger rule at confirm', async () => {
+test('a Wi-Fi logger photo from the Evidence step is kept but earns no points (retired 2026-11-23)', async () => {
     seedPending({ wifiLoggerPhotoUrl: 'https://storage/logger.jpg', installationPhotoUrl: 'https://storage/install.jpg' });
     seedInstaller({ installs: 10 });
     documents.set(key('points_config', 'wifi_logger'), { points: 70, active: true });
@@ -853,10 +853,8 @@ test('a Wi-Fi logger photo from the Evidence step pays the wifi_logger rule at c
     await pressConfirm(TOKEN);
 
     const ledger = [...documents.values()].filter((d) => d && d.action === 'wifi_logger');
-    assert.equal(ledger.length, 1, 'one wifi_logger ledger row');
-    assert.equal(ledger[0].points, 70);
-    assert.match(ledger[0].awardKey, /^wifi_logger:reg:/, 'keyed per install, like the photo award');
-    assert.equal(installerDoc().points, 50 + 70, 'base award plus the logger award');
+    assert.equal(ledger.length, 0, 'no wifi_logger ledger row, even with the rule switched on');
+    assert.equal(installerDoc().points, 50, 'base award only');
     assert.equal(registrations()[0].wifiLoggerPhotoUrl, 'https://storage/logger.jpg', 'photo reaches the registration');
     assert.equal(registrations()[0].installationPhotoUrl, 'https://storage/install.jpg');
 });

@@ -74,9 +74,9 @@ const seed = () => ({
     },
     points_config: {
         linkedin_post: { points: 50, active: true },
-        wifi_logger: { points: 70, active: false },
+        whatsapp_post: { points: 25, active: false },
         google_review: { points: 0, active: true },
-        printed_certificate: { points: 200, active: true },
+        facebook_post: { points: 10, active: true },
     },
 });
 
@@ -166,10 +166,10 @@ test('a reviewed claim already filed the old way holds the award', async () => {
 
 test('an award already paid at confirm (ledger row, no claim) is not paid again on upload', async () => {
     const s = seed();
-    s.points_config.wifi_logger.active = true;
-    s.installer_points = { l1: { awardKey: 'wifi_logger:reg:reg1', action: 'wifi_logger', points: 70 } };
+    s.points_config.eb_bill_before_after = { points: 50, active: true };
+    s.installer_points = { l1: { awardKey: 'eb_bill_before_after:cust:cust1', action: 'eb_bill_before_after', points: 50 } };
     const fs = fakeFirestore(s);
-    const r = await call(fs, 'tok-sub', linkedin({ kind: 'wifi_logger' }));
+    const r = await call(fs, 'tok-sub', linkedin({ kind: 'eb_bill_before_after' }));
     assert.equal(r.body.status, 'already-paid');
     assert.equal(fs.data.installers.row_sub.points, 100);
 });
@@ -206,10 +206,10 @@ test('the same photo bytes reused on another award -> 409, nothing paid', async 
     const fs = fakeFirestore(seed());
     const same = { 'product_files/reg1/1.jpg': 'SAME', 'product_files/reg2/9.jpg': 'SAME' };
     await call(fs, 'tok-sub', linkedin(), same);
-    const r = await call(fs, 'tok-sub', { registrationId: 'reg2', kind: 'printed_certificate', storagePath: 'product_files/reg2/9.jpg' }, same);
+    const r = await call(fs, 'tok-sub', { registrationId: 'reg2', kind: 'facebook_post', storagePath: 'product_files/reg2/9.jpg' }, same);
     assert.equal(r.status, 409);
     assert.equal(r.body.status, 'duplicate-photo');
-    assert.equal(fs.data.company_points, undefined);
+    assert.equal(fs.data.installers.row_sub.points, 150, 'only the first award was paid');
 });
 
 test('a photo already used as install evidence at confirm -> 409', async () => {
@@ -222,7 +222,7 @@ test('a photo already used as install evidence at confirm -> 409', async () => {
 
 test('a paused rule -> nothing paid, says so', async () => {
     const fs = fakeFirestore(seed());
-    const r = await call(fs, 'tok-sub', linkedin({ kind: 'wifi_logger' }));
+    const r = await call(fs, 'tok-sub', linkedin({ kind: 'whatsapp_post' }));
     assert.equal(r.body.status, 'paused');
     assert.equal(fs.data.installers.row_sub.points, 100);
 });
@@ -250,15 +250,18 @@ test('a photo that is not in Storage -> 404, nothing paid', async () => {
     assert.equal(fs.data.installers.row_sub.points, 100);
 });
 
-test('a company rule (printed certificate) credits the company, not the engineer', async () => {
-    const fs = fakeFirestore(seed());
-    const r = await call(fs, 'tok-sub', linkedin({ kind: 'printed_certificate' }));
-    assert.equal(r.body.status, 'paid');
-    assert.equal(r.body.paidTo, 'company');
+test('retired rewards (2026-11-23) earn nothing, even with a live config row', async () => {
+    const s = seed();
+    s.points_config.wifi_logger = { points: 70, active: true };
+    s.points_config.printed_certificate = { points: 200, active: true };
+    const fs = fakeFirestore(s);
+    for (const kind of ['wifi_logger', 'printed_certificate']) {
+        const r = await call(fs, 'tok-sub', linkedin({ kind }));
+        assert.equal(r.status, 400, kind);
+        assert.equal(r.body.status, 'not-rewarded', kind);
+    }
     assert.equal(fs.data.installers.row_sub.points, 100);
-    const row = Object.values(fs.data.company_points)[0];
-    assert.equal(row.companyId, 'co1');
-    assert.equal(row.points, 200);
+    assert.equal(fs.data.company_points, undefined);
 });
 
 test('claim-rules: an installer gets each kind with its live value; paused and zero read as inactive', async () => {
@@ -266,9 +269,11 @@ test('claim-rules: an installer gets each kind with its live value; paused and z
     assert.equal(r.status, 200);
     const by = Object.fromEntries(r.body.rules.map((x) => [x.kind, x]));
     assert.deepEqual([by.linkedin_post.active, by.linkedin_post.points], [true, 50]);
-    assert.equal(by.wifi_logger.active, false);
+    assert.equal(by.whatsapp_post.active, false);
     assert.equal(by.google_review.active, false);
-    assert.equal(by.facebook_post.active, false, 'no config row -> inactive');
+    assert.equal(by.instagram_post.active, false, 'no config row -> inactive');
+    assert.equal(by.wifi_logger, undefined, 'retired');
+    assert.equal(by.printed_certificate, undefined, 'retired');
 });
 
 test('claim-rules: a customer token -> 403', async () => {
@@ -304,10 +309,10 @@ test('install points: what was earned on this install, and which photo rewards a
     const byKind = Object.fromEntries(r.body.rules.map((x) => [x.kind, x.status]));
     assert.equal(byKind.linkedin_post, 'available');
     assert.equal(byKind.eb_bill_before_after, 'earned', 'once per customer: paid elsewhere counts');
-    assert.equal(byKind.printed_certificate, 'available');
-    assert.equal(byKind.wifi_logger, undefined, 'paused rules are left out');
+    assert.equal(byKind.facebook_post, 'available');
+    assert.equal(byKind.whatsapp_post, undefined, 'paused rules are left out');
     assert.equal(byKind.google_review, undefined, 'zero-point rules are left out');
-    assert.equal(r.body.availableTotal, 50 + 200);
+    assert.equal(r.body.availableTotal, 50 + 10);
 });
 
 test('install points: a photo paid on this install is listed once, as the earned rule row', async () => {

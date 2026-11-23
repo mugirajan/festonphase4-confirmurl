@@ -31,6 +31,8 @@ const MAX_POINTS = 100000;
 
 const str = (v) => (typeof v === 'string' ? v.trim() : '');
 const reply = (status, body) => ({ status, body });
+/** Points carry at most two decimals (a 3.2 kW install earns 3.2); sums are kept to that. */
+const round2 = (n) => Math.round(n * 100) / 100;
 
 const ROLE_LABELS = {
     started: 'Started',
@@ -183,8 +185,8 @@ async function awardSplit({ firestore, verifyIdToken, authorization, body, now, 
     const installerUid = str(b.installerUid);
     const points = Number(b.points);
     if (!registrationId || !installerUid) return reply(400, { status: 'bad-request', message: 'Missing install or engineer.' });
-    if (!Number.isInteger(points) || points <= 0 || points > MAX_POINTS) {
-        return reply(400, { status: 'bad-points', message: 'Enter a whole number of points above zero.' });
+    if (!Number.isFinite(points) || points <= 0 || points > MAX_POINTS || Math.abs(round2(points) - points) > 1e-9) {
+        return reply(400, { status: 'bad-points', message: 'Enter points above zero, with at most two decimal places.' });
     }
 
     const splitRef = firestore.collection(SPLITS_COLLECTION).doc(registrationId);
@@ -203,7 +205,7 @@ async function awardSplit({ firestore, verifyIdToken, authorization, body, now, 
         // all been paid but not the whole total could never be finished. The
         // total is still capped by `remaining`, so the install never pays more.
         const before = Number(split.awards && split.awards[installerUid] && split.awards[installerUid].points) || 0;
-        const remaining = Number(split.remaining) || 0;
+        const remaining = round2(Number(split.remaining) || 0);
         if (points > remaining) {
             return reply(400, { status: 'over', message: `Only ${remaining} points are left to give for this install.` });
         }
@@ -211,7 +213,7 @@ async function awardSplit({ firestore, verifyIdToken, authorization, body, now, 
         const installerSnap = await installerRow(firestore, tx, installerUid);
         if (!installerSnap) return reply(404, { status: 'no-installer', message: 'This engineer has no points account.' });
 
-        const left = remaining - points;
+        const left = round2(remaining - points);
         const product = split.product || {};
         const customer = split.customer || {};
         const phase = ROLE_LABELS[member.role] || 'Worked on';
@@ -245,7 +247,7 @@ async function awardSplit({ firestore, verifyIdToken, authorization, body, now, 
         });
         tx.update(splitRef, {
             // The engineer's running total for this install.
-            [`awards.${installerUid}`]: { points: before + points, at: now(), by: admin.uid, byName: admin.name },
+            [`awards.${installerUid}`]: { points: round2(before + points), at: now(), by: admin.uid, byName: admin.name },
             remaining: left,
             ...(left === 0 ? { status: 'done', doneAt: now() } : {}),
             updatedAt: now(),

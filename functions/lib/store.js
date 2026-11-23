@@ -471,42 +471,12 @@ async function completeRegistration(token, { userAgent, verifiedPhone, requirePh
                 // helper.
                 const customerEmailVerified = await emailVerifiedFor(userId);
 
+                // Retired 2026-11-23 — these no longer earn points, whatever
+                // `points_config` says: registered within 48 hours, a new
+                // engineer's first install, customer email verified, and the
+                // Wi-Fi logger photo. The logger photo and a verified customer
+                // email are requirements of an install now, not bonuses.
                 const systemRules = [
-                    {
-                        key: 'registration_within_48h',
-                        subject: 'installer',
-                        // From the install date to when the INSTALLER submitted —
-                        // not to when the customer confirmed. The installer does
-                        // not control how long a customer takes to open a link.
-                        earned: registeredPromptly(pending.installationDate, pending.createdAt),
-                        awardKey: 'registration_within_48h:reg:' + registrationRefId,
-                    },
-                    {
-                        key: 'new_se_first_install',
-                        // Owed to the COMPANY — the scheme rewards a firm for
-                        // onboarding somebody who then did the work — but keyed
-                        // on the ENGINEER, so it is earned once per new engineer
-                        // rather than once ever.
-                        subject: 'company',
-                        earned: isFirstInstallForEngineer && !!awardCompanyId,
-                        awardKey: 'new_se_first_install:se:' + installerId,
-                    },
-                    {
-                        key: 'customer_email_verified',
-                        subject: 'installer',
-                        earned: customerEmailVerified,
-                        awardKey: 'customer_email_verified:cust:' + userId,
-                    },
-                    {
-                        // The Wi-Fi logger photo is taken in the wizard's
-                        // Evidence step (2026-10-21), before any registration
-                        // exists, so it pays here. Same key as the photo award
-                        // in lib/claim-award.js, so it can never pay twice.
-                        key: 'wifi_logger',
-                        subject: 'installer',
-                        earned: typeof pending.wifiLoggerPhotoUrl === 'string' && pending.wifiLoggerPhotoUrl.trim() !== '',
-                        awardKey: 'wifi_logger:reg:' + registrationRefId,
-                    },
                     // The optional app-activated and EB bill photos from the
                     // Evidence step (2026-10-22). Both rules are once per
                     // customer, keyed as lib/claim-award.js keys them, so a

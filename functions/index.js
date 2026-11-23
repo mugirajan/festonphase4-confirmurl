@@ -79,6 +79,8 @@ const SPLIT_ACTIONS = {
     'install-points': require('./lib/claim-award').installPoints,
     // A social post's link: on the right platform, and not used before (2026-11-19).
     'check-post-link': require('./lib/post-links').checkPostLink,
+    // Is the customer's email verified? Asked before an engineer may submit (2026-11-23).
+    'customer-email-status': require('./lib/customer-email').customerEmailStatus,
     // Feston support's consent call: the customer's own confirmation form.
     'consent-form': require('./lib/consent-form').consentForm,
     // The company admin's Certificates page: their customers' Super Hero numbers.

@@ -15,8 +15,9 @@
  * install never earns nothing merely because Feston has not priced its family,
  * and a serial missing from inventory does not cost the installer their award.
  *
- * Rounded, not floored: the error is at most half a point, and floor would
- * systematically shortchange the installer.
+ * The per-kW award keeps its decimals (2026-11-23): 3.2 kW at one point per kW
+ * earns 3.2 points, not 3. Two decimal places, so a product of floats never
+ * leaves a tail like 9.899999. The flat fallback stays a whole number.
  */
 function resolveAward(input) {
     const flat = Number(input.flatPoints);
@@ -34,7 +35,7 @@ function resolveAward(input) {
 
     if (!usable) return { points: safeFlat, basis: 'flat' };
 
-    const points = Math.round(rate * kw);
+    const points = Math.round(rate * kw * 100) / 100;
     // A rate that computes to nothing is not an award — fall back rather than
     // paying zero for real work.
     return points > 0 ? { points, basis: 'per-kw' } : { points: safeFlat, basis: 'flat' };

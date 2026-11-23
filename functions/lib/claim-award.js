@@ -42,7 +42,8 @@ const CLAIMS_COLLECTION = 'points_claims';
  * from `points_config`; only the key, who is paid and how often matter here.
  */
 const PHOTO_RULES = {
-    wifi_logger: { label: 'Wi-Fi logger recorded', subject: 'installer', scope: 'per-install-once' },
+    // Retired 2026-11-23, no points: `wifi_logger` (the logger photo is a
+    // required part of every install) and `printed_certificate`.
     customer_app_activated: { label: 'Customer app activated', subject: 'installer', scope: 'per-customer-lifetime' },
     video_testimonial: { label: 'Video testimonial', subject: 'installer', scope: 'per-customer-lifetime' },
     eb_bill_before_after: { label: 'EB bill, before and after', subject: 'installer', scope: 'per-customer-lifetime' },
@@ -51,7 +52,6 @@ const PHOTO_RULES = {
     facebook_post: { label: 'Facebook post — Solar Super Hero', subject: 'installer', scope: 'per-customer-lifetime' },
     instagram_post: { label: 'Instagram post — Solar Super Hero', subject: 'installer', scope: 'per-customer-lifetime' },
     whatsapp_post: { label: 'WhatsApp post — Solar Super Hero', subject: 'installer', scope: 'per-customer-lifetime' },
-    printed_certificate: { label: 'Printed certificate issued to customer', subject: 'company', scope: 'per-customer-lifetime' },
 };
 
 const str = (v) => (typeof v === 'string' ? v.trim() : '');
@@ -408,7 +408,9 @@ async function installPoints({ firestore, verifyIdToken, authorization, body, lo
     }
     // An action whose credits were all taken back nets to nothing and is not
     // "earned"; it is left out rather than shown as a dash.
-    const earned = [...earnedByAction.entries()].map(([label, points]) => ({ label, points })).filter((e) => e.points > 0);
+    // Install points can carry decimals (3.2 kW earns 3.2); sums are kept to two places.
+    const round2 = (n) => Math.round(n * 100) / 100;
+    const earned = [...earnedByAction.entries()].map(([label, points]) => ({ label, points: round2(points) })).filter((e) => e.points > 0);
 
     // Each photo reward: earned already (here or for this customer elsewhere),
     // or open — with what it is worth now.
@@ -441,7 +443,7 @@ async function installPoints({ firestore, verifyIdToken, authorization, body, lo
     const split = splitSnap.exists ? splitSnap.data() || {} : {};
     const heldTotal = str(split.status) === 'pending' ? Number(split.remaining) || 0 : 0;
 
-    return reply(200, { status: 'ok', earned, earnedTotal, myTotal, heldTotal, rules, availableTotal });
+    return reply(200, { status: 'ok', earned, earnedTotal: round2(earnedTotal), myTotal: round2(myTotal), heldTotal: round2(heldTotal), rules, availableTotal });
 }
 
 module.exports = { awardPhotoClaim, listPhotoRules, installPoints, PHOTO_RULES, awardKeyFor, claimIdFor };

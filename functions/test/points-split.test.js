@@ -180,7 +180,7 @@ test('refused: more than is left, bad amounts, someone not on the team, another 
     const fs = seed();
     assert.equal((await call(fs, 'tok-admin', { registrationId: 'reg_1', installerUid: 'inst_12', points: 251 })).body.status, 'over');
     assert.equal((await call(fs, 'tok-admin', { registrationId: 'reg_1', installerUid: 'inst_12', points: 0 })).body.status, 'bad-points');
-    assert.equal((await call(fs, 'tok-admin', { registrationId: 'reg_1', installerUid: 'inst_12', points: 2.5 })).body.status, 'bad-points');
+    assert.equal((await call(fs, 'tok-admin', { registrationId: 'reg_1', installerUid: 'inst_12', points: 2.555 })).body.status, 'bad-points');
 
     await call(fs, 'tok-admin', { registrationId: 'reg_1', installerUid: 'inst_12', points: 50 });
     assert.equal(
@@ -233,4 +233,27 @@ test('an engineer lists their own notifications and marks them read', async () =
 
     const none = await listNotifications({ firestore: fs, verifyIdToken, authorization: 'Bearer tok-admin' });
     assert.deepEqual(none.body.items, [], "nobody reads another engineer's notifications");
+});
+
+test('a pool with decimals (a 3.2 kW install) can be given out exactly', async () => {
+    const fs = seed();
+    const split = fs.docs.get('points_splits/reg_1');
+    fs.docs.set('points_splits/reg_1', { ...split, pool: 3.3, remaining: 3.3 });
+    const a = await call(fs, 'tok-admin', { registrationId: 'reg_1', installerUid: 'inst_12', points: 1.1 });
+    assert.equal(a.status, 200);
+    assert.equal(a.body.remaining, 2.2, 'no float tail on what is left');
+    assert.equal((await call(fs, 'tok-admin', { registrationId: 'reg_1', installerUid: 'inst_55', points: 2.21 })).body.status, 'over');
+    const b = await call(fs, 'tok-admin', { registrationId: 'reg_1', installerUid: 'inst_55', points: 2.2 });
+    assert.equal(b.body.remaining, 0);
+    assert.equal(b.body.done, true);
+});
+
+test('award rule: capacity x rate keeps its decimals', () => {
+    const { resolveAward } = require('../lib/award-rule');
+    const pts = (kw, rate = 1) => resolveAward({ flatPoints: 0, ratePerKw: rate, rateActive: true, capacityKw: kw }).points;
+    assert.equal(pts(1), 1);
+    assert.equal(pts(32), 32);
+    assert.equal(pts(3.2), 3.2);
+    assert.equal(pts(3.3, 3), 9.9, 'no float tail');
+    assert.equal(pts(5, 50), 250);
 });
